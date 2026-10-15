@@ -1,11 +1,11 @@
 # Architecture
 
-A high-level map of how OroStarMail is put together, to help you find your way
+A high-level map of how AMail is put together, to help you find your way
 around the code.
 
 ## Overview
 
-OroStarMail is a **Qt (PySide6) desktop application** with a local **SQLite**
+AMail is a **Qt (PySide6) desktop application** with a local **SQLite**
 database and a **threaded background sync** layer. The UI never talks to the
 network directly: workers run on background threads and hand results to the UI
 through Qt signals, so the interface stays responsive while many mailboxes sync.
