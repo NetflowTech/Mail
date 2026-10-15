@@ -84,8 +84,8 @@ if IS_MAC:
         info_plist={
             'NSHighResolutionCapable': True,
             'NSRequiresAquaSystemAppearance': False,
-            'CFBundleShortVersionString': '1.4.7',
-            'CFBundleVersion': '1.4.7',
+            'CFBundleShortVersionString': '2.0.0',
+            'CFBundleVersion': '2.0.0',
             'LSMinimumSystemVersion': '12.0',
         },
     )

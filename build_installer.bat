@@ -1,5 +1,5 @@
 @echo off
-:: Build AMail-Setup-1.4.7.exe using Inno Setup.
+:: Build AMail-Setup-2.0.0.exe using Inno Setup.
 :: Run AFTER build_exe.bat has completed successfully.
 :: Requires Inno Setup 6 installed from: jrsoftware.org/isinfo.php
 setlocal
