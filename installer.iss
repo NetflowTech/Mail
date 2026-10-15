@@ -28,7 +28,7 @@ AllowNoIcons=yes
 ; ── Output ───────────────────────────────────────────────────────────────────
 OutputDir=installer_output
 OutputBaseFilename={#AppName}-Setup-{#AppVersion}
-SetupIconFile=assets\icon.ico
+SetupIconFile=assets\AMail-icon-Exo2.ico
 
 ; ── Compression (LZMA2 — best ratio, fully local, no network) ────────────────
 Compression=lzma2/ultra64

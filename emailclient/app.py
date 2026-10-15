@@ -36,7 +36,7 @@ from .paths import asset_dir
 from .ui import message_list, theme
 
 ASSET_DIR = asset_dir()
-LOGO_PATH = ASSET_DIR / "logo.png"
+LOGO_PATH = ASSET_DIR / "AMail-logo-Exo2.svg"
 
 
 def _splash_pixmap() -> QPixmap:

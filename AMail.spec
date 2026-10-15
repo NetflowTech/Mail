@@ -31,7 +31,8 @@ a = Analysis(
     hiddenimports=(
         collect_submodules('emailclient') +
         collect_submodules('PySide6') +
-        ['pyspellchecker', 'imapclient', 'msal', 'cryptography', 'certifi'] +
+        ['pyspellchecker', 'imapclient', 'msal', 'cryptography', 'certifi',
+         'PySide6.QtSvg', 'PySide6.QtSvgWidgets'] +
         PLATFORM_IMPORTS
     ),
     hookspath=[],
@@ -61,7 +62,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='assets/icon.ico' if IS_WIN else None,
+    icon='assets/AMail-icon-Exo2.ico' if IS_WIN else None,
 )
 
 coll = COLLECT(
@@ -79,7 +80,7 @@ if IS_MAC:
     app = BUNDLE(
         coll,
         name='AMail.app',
-        icon='assets/icon.icns',
+        icon='assets/AMail-icon-Exo2.icns',
         bundle_identifier='com.amail.app',
         info_plist={
             'NSHighResolutionCapable': True,

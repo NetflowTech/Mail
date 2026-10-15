@@ -21,7 +21,7 @@ class AboutDialog(QDialog):
         lay.setContentsMargins(28, 24, 28, 20)
 
         logo = QLabel()
-        pm = QPixmap(str(asset_dir() / "logo.png"))
+        pm = QPixmap(str(asset_dir() / "AMail-logo-Exo2.svg"))
         if not pm.isNull():
             logo.setPixmap(pm.scaled(
                 110, 110, Qt.AspectRatioMode.KeepAspectRatio,
