@@ -327,6 +327,16 @@ class _MailPage(QWebEnginePage):
             return False
         return True
 
+    def featurePermissionRequested(self, url: QUrl, feature) -> None:
+        # Deny every device permission Chromium might request (microphone,
+        # camera, geolocation, notifications…). An email reader has no
+        # legitimate use for any of these, and without this macOS shows a
+        # microphone permission prompt the first time QtWebEngine initialises.
+        self.setFeaturePermission(
+            url, feature,
+            QWebEnginePage.PermissionPolicy.PermissionDeniedByUser,
+        )
+
 
 class Reader(QWebEngineView):
     attachment_clicked = Signal(str)   # local attachment path the user clicked
