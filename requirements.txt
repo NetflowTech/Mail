@@ -1,0 +1,15 @@
+# 6.11.x macOS wheels crash on startup (cocoa plugin load failure); 6.10.3 is stable
+PySide6==6.10.3
+imapclient>=3.0
+# Our own CA bundle: Windows PCs with a stale root store reject the server's
+# valid Let's Encrypt chain ("certificate has expired") — see nethttp.ssl_context
+certifi>=2024.7.4
+# Spell check while composing: pure-Python, MIT, ships its own word list
+pyspellchecker>=0.8
+keyring>=24.0
+pytest>=8.0
+pytest-qt>=4.4
+winotify>=1.1; sys_platform == 'win32'
+msal>=1.28
+pyobjc-core>=10; sys_platform == "darwin"
+pyobjc-framework-Cocoa>=10; sys_platform == "darwin"
