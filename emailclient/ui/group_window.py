@@ -119,7 +119,7 @@ class GroupWindow(QMainWindow):
                 name = grp["name"]
                 icon = grp["icon"]
                 break
-        self.setWindowTitle(f"{icon} {name} — OroStarMail")
+        self.setWindowTitle(f"{icon} {name} — AMail")
         self.resize(1180, 680)
 
         # -- toolbar --

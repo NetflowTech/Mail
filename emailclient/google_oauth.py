@@ -45,7 +45,7 @@ _token_cache: dict[str, tuple[str, float]] = {}
 _DONE_HTML = (b"<!doctype html><html><body style='font-family:sans-serif;"
               b"text-align:center;padding-top:80px'>"
               b"<h2>Login complete &#10003;</h2>"
-              b"<p>You can close this tab and return to OroStarMail.</p>"
+              b"<p>You can close this tab and return to AMail.</p>"
               b"</body></html>")
 
 

@@ -1,5 +1,5 @@
 @echo off
-:: Build OroStarMail.exe for Windows.
+:: Build AMail.exe for Windows.
 :: Run from the repo root: build_exe.bat
 :: Requires Python 3.10+ on PATH.
 setlocal enabledelayedexpansion
@@ -7,7 +7,7 @@ setlocal enabledelayedexpansion
 set REPO=%~dp0
 set VENV=%REPO%.venv
 set DIST=%REPO%dist
-set EXE=%DIST%\OroStarMail\OroStarMail.exe
+set EXE=%DIST%\AMail\AMail.exe
 
 echo =^> Checking virtual environment...
 if not exist "%VENV%\Scripts\python.exe" (
@@ -24,7 +24,7 @@ if errorlevel 1 ( echo ERROR: pip install pyinstaller failed & exit /b 1 )
 
 echo =^> Building EXE...
 cd /d "%REPO%"
-"%VENV%\Scripts\pyinstaller" OroStarMail.spec --noconfirm
+"%VENV%\Scripts\pyinstaller" AMail.spec --noconfirm
 if errorlevel 1 ( echo ERROR: PyInstaller failed & exit /b 1 )
 
 if not exist "%EXE%" (

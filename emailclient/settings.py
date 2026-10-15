@@ -33,7 +33,7 @@ class NotifSettings:
     """Read/write notification preferences via QSettings."""
 
     def __init__(self, qs: QSettings | None = None):
-        self._qs = qs if qs is not None else QSettings("OroStarMail", "ui")
+        self._qs = qs if qs is not None else QSettings("AMail", "ui")
 
     @property
     def enabled(self) -> bool:
@@ -114,7 +114,7 @@ class SendSettings:
     """Compose/send preferences (Gmail-style Undo Send delay)."""
 
     def __init__(self, qs: QSettings | None = None):
-        self._qs = qs if qs is not None else QSettings("OroStarMail", "ui")
+        self._qs = qs if qs is not None else QSettings("AMail", "ui")
 
     @property
     def undo_send_seconds(self) -> int:
@@ -135,7 +135,7 @@ class ReaderSettings:
     """Reader preferences (remote-image loading / privacy)."""
 
     def __init__(self, qs: QSettings | None = None):
-        self._qs = qs if qs is not None else QSettings("OroStarMail", "ui")
+        self._qs = qs if qs is not None else QSettings("AMail", "ui")
 
     @property
     def load_remote_images(self) -> bool:
@@ -153,7 +153,7 @@ class ComposeSettings:
     """Preferences for writing mail."""
 
     def __init__(self, qs: QSettings | None = None):
-        self._qs = qs if qs is not None else QSettings("OroStarMail", "ui")
+        self._qs = qs if qs is not None else QSettings("AMail", "ui")
 
     @property
     def spell_check(self) -> bool:
@@ -171,7 +171,7 @@ class AppearanceSettings:
     """Look-and-feel preferences that aren't the theme itself."""
 
     def __init__(self, qs: QSettings | None = None):
-        self._qs = qs if qs is not None else QSettings("OroStarMail", "ui")
+        self._qs = qs if qs is not None else QSettings("AMail", "ui")
 
     @property
     def show_email(self) -> bool:
@@ -191,7 +191,7 @@ class BackupSettings:
     """Read/write backup preferences via QSettings (same file as NotifSettings)."""
 
     def __init__(self, qs: QSettings | None = None):
-        self._qs = qs if qs is not None else QSettings("OroStarMail", "ui")
+        self._qs = qs if qs is not None else QSettings("AMail", "ui")
 
     @property
     def frequency(self) -> str:

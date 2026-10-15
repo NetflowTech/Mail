@@ -1,4 +1,4 @@
-"""Run OroStarMail from source.
+"""Run AMail from source.
 
 Setup (once):
     python3 -m venv .venv

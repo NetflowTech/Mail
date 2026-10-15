@@ -185,7 +185,7 @@ def wrap_body_images(body_html: str) -> tuple[str, list[str]]:
             return tag
         idx = len(srcs)
         srcs.append(sm.group(2))
-        return (f'<a href="orostarimg:{idx}" '
+        return (f'<a href="amailimg:{idx}" '
                 f'style="cursor:zoom-in;text-decoration:none">{tag}</a>')
 
     return _IMG_TAG_RE.sub(repl, body_html), srcs
@@ -316,8 +316,8 @@ class _MailPage(QWebEnginePage):
 
     def acceptNavigationRequest(self, url: QUrl, nav_type, is_main_frame):
         if nav_type == QWebEnginePage.NavigationType.NavigationTypeLinkClicked:
-            if url.scheme() == "orostarimg":
-                # href="orostarimg:N" — N indexes the reader's image list.
+            if url.scheme() == "amailimg":
+                # href="amailimg:N" — N indexes the reader's image list.
                 try:
                     self.image_activated.emit(int(url.toString().split(":", 1)[1]))
                 except (ValueError, IndexError):

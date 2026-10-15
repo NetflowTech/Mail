@@ -22,7 +22,7 @@ from . import google_oauth
 # -- local identity helpers (no network) -------------------------------------
 
 def _qs() -> QSettings:
-    return QSettings("OroStarMail", "ui")
+    return QSettings("AMail", "ui")
 
 
 def _key() -> str:

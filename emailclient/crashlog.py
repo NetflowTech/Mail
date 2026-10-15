@@ -48,7 +48,7 @@ def context() -> dict:
         pass
     try:
         from PySide6.QtCore import QSettings
-        ctx["key"] = str(QSettings("OroStarMail", "ui").value("lic_key") or "")
+        ctx["key"] = str(QSettings("AMail", "ui").value("lic_key") or "")
     except Exception:
         pass
     return ctx
@@ -80,7 +80,7 @@ def log_dir() -> Path:
 
 
 def log_path() -> Path:
-    return log_dir() / "orostarmail.log"
+    return log_dir() / "amail.log"
 
 
 def install() -> None:

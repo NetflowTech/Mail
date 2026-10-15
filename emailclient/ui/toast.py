@@ -88,7 +88,7 @@ class NotificationStack(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         header_row = QHBoxLayout()
         header_row.setContentsMargins(0, 0, 0, 0)
-        self._header = QLabel("  📬 OroStarMail — New emails — click to open")
+        self._header = QLabel("  📬 AMail — New emails — click to open")
         header_row.addWidget(self._header, 1)
         self._close_all = QPushButton("Close all")
         self._close_all.setObjectName("toastCloseAll")

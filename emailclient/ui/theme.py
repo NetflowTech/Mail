@@ -1,4 +1,4 @@
-"""OroStarMail visual theme system: named palettes + one accent.
+"""AMail visual theme system: named palettes + one accent.
 
 All chrome colors live here. Email content stays untouched (it is the hero).
 
@@ -16,10 +16,10 @@ from __future__ import annotations
 
 from PySide6.QtCore import QSettings
 
-DEFAULT_THEME = "Oro Light"
+DEFAULT_THEME = "AMail Light"
 
 PALETTES = {
-    "Oro Light": {  # clean white, airy neutrals, one gold accent
+    "AMail Light": {  # clean white, airy neutrals, one gold accent
         "BG": "#FFFFFF",          # content surface
         "PANEL": "#F5F6F8",       # sidebar / panel layer
         "PANEL_DARK": "#E8EAED",  # pressed / borders on panel
@@ -79,7 +79,7 @@ PALETTES = {
     # Dark themes darken the CHROME only. The email itself keeps a light
     # sheet (CONTENT_*): messages are white HTML, and a dark frame around a
     # white body is the one thing this app is explicitly not trying to be.
-    "Oro Dark": {  # warm charcoal, the house gold
+    "AMail Dark": {  # warm charcoal, the house gold
         "IS_DARK": True,
         "BG": "#1A1714",
         "PANEL": "#211D19",
@@ -113,8 +113,8 @@ PALETTES = {
 
 # Follows the OS light/dark setting instead of pinning one palette.
 SYSTEM_THEME = "System"
-SYSTEM_LIGHT = "Oro Light"
-SYSTEM_DARK = "Oro Dark"
+SYSTEM_LIGHT = "AMail Light"
+SYSTEM_DARK = "AMail Dark"
 
 # Semantic state colours. Kept out of the palettes so every theme gets them;
 # a palette may still override any of these by naming them.
@@ -233,13 +233,13 @@ DEFAULT_DENSITY = "Comfortable"
 
 
 def current_density(qs: QSettings | None = None) -> str:
-    qs = qs if qs is not None else QSettings("OroStarMail", "ui")
+    qs = qs if qs is not None else QSettings("AMail", "ui")
     name = str(qs.value("density", DEFAULT_DENSITY))
     return name if name in DENSITIES else DEFAULT_DENSITY
 
 
 def set_density(name: str, qs: QSettings | None = None) -> None:
-    qs = qs if qs is not None else QSettings("OroStarMail", "ui")
+    qs = qs if qs is not None else QSettings("AMail", "ui")
     qs.setValue("density", name if name in DENSITIES else DEFAULT_DENSITY)
 
 
@@ -291,7 +291,7 @@ def apply_theme(name: str) -> None:
 
 def current_theme(qs: QSettings | None = None) -> str:
     """Persisted theme choice — a palette name, or "System" to follow the OS."""
-    qs = qs if qs is not None else QSettings("OroStarMail", "ui")
+    qs = qs if qs is not None else QSettings("AMail", "ui")
     name = str(qs.value("theme", DEFAULT_THEME))
     if name == SYSTEM_THEME or name in PALETTES:
         return name
@@ -300,7 +300,7 @@ def current_theme(qs: QSettings | None = None) -> str:
 
 def set_theme(name: str, qs: QSettings | None = None) -> None:
     """Persist + apply a theme."""
-    qs = qs if qs is not None else QSettings("OroStarMail", "ui")
+    qs = qs if qs is not None else QSettings("AMail", "ui")
     qs.setValue("theme", name)
     apply_theme(name)
 

@@ -19,7 +19,7 @@ import uuid
 
 from . import nethttp
 
-FEEDBACK_URL = "https://orostars.com/orostarmail/feedback.php"
+FEEDBACK_URL = "https://amail.app/amail/feedback.php"
 
 KINDS = (("issue", "Something is broken"),
          ("idea", "Idea / request"),
@@ -43,7 +43,7 @@ def _context() -> dict:
 
 def _multipart(fields: dict, files: list[tuple[str, str]]) -> tuple[bytes, str]:
     """Encode *fields* and *files* [(field, path)] as multipart/form-data."""
-    boundary = "----OroStarMail" + uuid.uuid4().hex
+    boundary = "----AMail" + uuid.uuid4().hex
     sep = ("--" + boundary).encode()
     body = bytearray()
     for name, value in fields.items():

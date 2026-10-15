@@ -24,7 +24,7 @@ _TERMINAL_NOTIFIER = shutil.which("terminal-notifier") or (
 # costs real time — a macOS subprocess is ~230 ms, and winotify runs a
 # PowerShell script per notification — and this used to happen on the GUI
 # thread inside on_new_messages. With a burst of accounts syncing, that is
-# seconds of a frozen window ("OroStarMail (Not Responding)").
+# seconds of a frozen window ("AMail (Not Responding)").
 # One worker, not a pool: banners should still appear in order.
 _SENDER = ThreadPoolExecutor(max_workers=1, thread_name_prefix="notify")
 
@@ -51,7 +51,7 @@ def send_blocking(title: str, body: str, msg_id: int | None = None,
         if sys.platform == "darwin":
             if _TERMINAL_NOTIFIER:
                 cmd = [_TERMINAL_NOTIFIER, "-title", title, "-message", body,
-                       "-group", f"orostarmail-{msg_id or 'general'}"]
+                       "-group", f"amail-{msg_id or 'general'}"]
                 if sound:
                     cmd += ["-sound", sound]
                 if msg_id is not None and msg_id > 0:
@@ -69,6 +69,6 @@ def send_blocking(title: str, body: str, msg_id: int | None = None,
                                check=False, timeout=5)
         elif sys.platform == "win32":
             from winotify import Notification
-            Notification(app_id="OroStarMail", title=title, msg=body).show()
+            Notification(app_id="AMail", title=title, msg=body).show()
     except Exception:
         pass

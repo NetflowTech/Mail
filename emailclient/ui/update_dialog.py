@@ -18,7 +18,7 @@ class UpdateDialog(QDialog):
         lay.setContentsMargins(24, 20, 24, 16)
         lay.setSpacing(10)
 
-        title = QLabel(f"OroStarMail {ver} is available")
+        title = QLabel(f"AMail {ver} is available")
         f = title.font()
         f.setPointSize(15)
         f.setBold(True)

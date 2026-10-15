@@ -1,4 +1,4 @@
-"""Client for cross-device fleet management (fleet.php on orostars.com).
+"""Client for cross-device fleet management (fleet.php on amail.app).
 
 Mirrors approval.py: stdlib urllib + QSettings, no third-party deps, every call
 fails soft (network/None results never raise into the UI). Tenant is the license
@@ -24,7 +24,7 @@ from PySide6.QtCore import QSettings
 
 from . import approval, nethttp
 
-FLEET_URL = "https://orostars.com/orostarmail/fleet.php"
+FLEET_URL = "https://amail.app/amail/fleet.php"
 _BLOCKLIST_KEY = "fleet_blocklist"
 _CAN_EXPORT_KEY = "fleet_can_export"
 
@@ -32,7 +32,7 @@ log = logging.getLogger(__name__)
 
 
 def _qs() -> QSettings:
-    return QSettings("OroStarMail", "ui")
+    return QSettings("AMail", "ui")
 
 
 def _key() -> str:

@@ -1,20 +1,20 @@
-; Inno Setup 6 installer script for OroStarMail
+; Inno Setup 6 installer script for AMail
 ; Requires: Inno Setup 6 (jrsoftware.org/isinfo.php) — free
 ; Build: run build_exe.bat first, then compile this with ISCC.exe
 ;
 ; Fully offline — no download URLs, no update endpoints, no telemetry.
 
-#define AppName    "OroStarMail"
+#define AppName    "AMail"
 #define AppVersion "1.4.7"
-#define AppExe     "OroStarMail.exe"
-#define SourceDir  "dist\OroStarMail"
+#define AppExe     "AMail.exe"
+#define SourceDir  "dist\AMail"
 
 [Setup]
 ; ── Identity ─────────────────────────────────────────────────────────────────
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
-AppPublisher=Oro Star
+AppPublisher=AMail
 ; All URL fields intentionally blank — no phoning home from the installer
 AppPublisherURL=
 AppSupportURL=
@@ -89,10 +89,10 @@ Filename: "taskkill.exe"; Parameters: "/f /im {#AppExe}"; Flags: runhidden skipi
 
 [Registry]
 ; No registry entries written by the installer itself.
-; The app writes its own settings under HKCU\Software\OroStarMail at runtime
+; The app writes its own settings under HKCU\Software\AMail at runtime
 ; (QSettings) — those stay after uninstall so a reinstall keeps the user's prefs.
 ; If you want a clean wipe on uninstall, uncomment the line below:
-; Root: HKCU; Subkey: "Software\OroStarMail"; Flags: uninsdeletekey; Tasks: purgedata
+; Root: HKCU; Subkey: "Software\AMail"; Flags: uninsdeletekey; Tasks: purgedata
 
 
 [Code]

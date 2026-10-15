@@ -112,7 +112,7 @@ def import_accounts(db, blob: bytes, passphrase: str, max_add: int | None = None
     Raises ValueError on bad file / wrong passphrase.
     """
     if not blob.startswith(MAGIC + b"\n"):
-        raise ValueError("This is not an OroStarMail account backup file.")
+        raise ValueError("This is not an AMail account backup file.")
     body = blob[len(MAGIC) + 1:]
     salt, sealed = body[:16], body[16:]
     raw = _decrypt(passphrase, salt, sealed)

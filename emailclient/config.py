@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-APP_NAME = "OroStarMail"
+APP_NAME = "AMail"
 
 
 def data_dir() -> Path:
-    d = Path.home() / ".orostarmail"
+    d = Path.home() / ".amail"
     d.mkdir(parents=True, exist_ok=True)
     return d
 

@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QLineEdit,
 
 
 class LicenseDialog(QDialog):
-    """Enter / view the OroStarMail license.
+    """Enter / view the AMail license.
 
     dismissable=False is the forced-activation mode at startup: the Cancel
     button is hidden — closing the dialog without activating makes exec()
@@ -18,7 +18,7 @@ class LicenseDialog(QDialog):
     def __init__(self, manager, parent=None, dismissable=True):
         super().__init__(parent)
         self._manager = manager
-        self.setWindowTitle("OroStarMail License")
+        self.setWindowTitle("AMail License")
         self.setModal(True)
         self.resize(420, 240)
 
@@ -26,7 +26,7 @@ class LicenseDialog(QDialog):
         layout.setSpacing(10)
         layout.setContentsMargins(24, 24, 24, 24)
 
-        header = QLabel("🔑 OroStarMail License")
+        header = QLabel("🔑 AMail License")
         f = header.font()
         f.setPointSize(f.pointSize() + 3)
         f.setWeight(QFont.Weight.DemiBold)
@@ -83,7 +83,7 @@ class LicenseDialog(QDialog):
                 "Your license was revoked. Enter a new license key.")
         else:
             self.status_label.setText(
-                "Enter your license key to activate OroStarMail.")
+                "Enter your license key to activate AMail.")
 
     def _activate(self):
         key = self.key_edit.text().strip()

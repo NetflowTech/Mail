@@ -30,7 +30,7 @@ _MIN_PREFIX = 2  # don't pop up on a single typed character
 #: Our own clipboard type for a dragged recipient. Having one means a chip can
 #: only be dropped where it makes sense — a field will not swallow arbitrary
 #: text someone happens to drag over it.
-RECIPIENT_MIME = "application/x-orostarmail-recipient"
+RECIPIENT_MIME = "application/x-amail-recipient"
 
 
 def recipient_mime(display: str) -> QMimeData:

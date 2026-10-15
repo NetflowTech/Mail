@@ -1,4 +1,4 @@
-"""Online license verification against orostars.com.
+"""Online license verification against amail.app.
 
 License file: one license per line, ``KEY:ACCOUNT_LIMIT:DAYS`` —
 e.g. ``LCGE6-GFFHL-9YMP0-G9E4T:200:365``. DAYS counts from activation
@@ -19,12 +19,12 @@ from PySide6.QtCore import QSettings
 
 from . import nethttp
 
-LICENSE_URL = "https://orostars.com/orostarmail/lic.txt"
+LICENSE_URL = "https://amail.app/amail/lic.txt"
 # Generation dates live in a SEPARATE file (KEY:YYYY-MM-DD per line) so lic.txt
 # stays strictly KEY:LIMIT:DAYS — older builds skip any 4-field line. A .txt (not
 # .json) so it's fetchable over HTTP (.htaccess denies *.json).
-STARTS_URL = "https://orostars.com/orostarmail/lic_starts.txt"
-USAGE_URL = "https://orostars.com/orostarmail/usage.php"
+STARTS_URL = "https://amail.app/amail/lic_starts.txt"
+USAGE_URL = "https://amail.app/amail/usage.php"
 GRACE_DAYS = 7  # offline grace: keep last verified state this long
 
 log = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ class LicenseManager:
     """Activation, expiry and account-limit enforcement via QSettings."""
 
     def __init__(self, qs: QSettings | None = None):
-        self._qs = qs if qs is not None else QSettings("OroStarMail", "ui")
+        self._qs = qs if qs is not None else QSettings("AMail", "ui")
         self._revoked = False     # set when the server drops our key
         self._unverified = False  # offline beyond grace — warn, don't brick
         # Why the last usage call failed, so the License tab can say more than

@@ -51,7 +51,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='OroStarMail',
+    name='AMail',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -72,15 +72,15 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name='OroStarMail',
+    name='AMail',
 )
 
 if IS_MAC:
     app = BUNDLE(
         coll,
-        name='OroStarMail.app',
+        name='AMail.app',
         icon='assets/icon.icns',
-        bundle_identifier='com.orostar.orostarmail',
+        bundle_identifier='com.amail.app',
         info_plist={
             'NSHighResolutionCapable': True,
             'NSRequiresAquaSystemAppearance': False,

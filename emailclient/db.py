@@ -339,13 +339,13 @@ class Database:
 
     def get_blocklist(self) -> set[str]:
         """License-wide blocked emails (lowercased), pushed by the fleet
-        heartbeat and cached in QSettings('OroStarMail','ui')['fleet_blocklist'].
+        heartbeat and cached in QSettings('AMail','ui')['fleet_blocklist'].
         Read here (not via fleet.py) so the sync engine/worker enforce the
         blocklist without importing GUI/network modules. Never raises."""
         from PySide6.QtCore import QSettings
         import json
         try:
-            raw = QSettings("OroStarMail", "ui").value("fleet_blocklist") or "[]"
+            raw = QSettings("AMail", "ui").value("fleet_blocklist") or "[]"
             return {str(e).lower() for e in json.loads(str(raw))}
         except Exception:
             return set()

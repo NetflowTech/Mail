@@ -59,12 +59,12 @@ def _splash_pixmap() -> QPixmap:
     f.setWeight(QFont.Weight.Bold)
     p.setFont(f)
     p.setPen(QColor(theme.GOLD_DEEP))
-    p.drawText(0, 180, w, 34, Qt.AlignmentFlag.AlignCenter, "OroStarMail")
+    p.drawText(0, 180, w, 34, Qt.AlignmentFlag.AlignCenter, "AMail")
     f2 = QFont()
     f2.setPointSize(11)
     p.setFont(f2)
     p.setPen(QColor(theme.TEXT_DIM))
-    p.drawText(0, 214, w, 22, Qt.AlignmentFlag.AlignCenter, "by Oro Star")
+    p.drawText(0, 214, w, 22, Qt.AlignmentFlag.AlignCenter, "by AMail")
     p.end()
     return pm
 
@@ -124,7 +124,7 @@ def main():
     _raise_fd_limit()  # 100+ IMAP connections need more than macOS's 256 fds
     app = QApplication(sys.argv)
     crashlog.start_hang_watchdog()  # report a frozen UI (hangs throw no exception)
-    app.setApplicationName("OroStarMail")
+    app.setApplicationName("AMail")
     app.setStyle("Fusion")  # consistent QSS rendering across platforms
     # theme was applied at import time, before a QApplication existed — redo it
     # now that the OS light/dark hint is readable, so "System" starts correct.
@@ -158,13 +158,13 @@ def main():
     window = MainWindow(db, engine, outbox_worker=outbox)
 
     tray = QSystemTrayIcon(_tray_icon(), app)
-    tray.setToolTip("OroStarMail — running in the background")
+    tray.setToolTip("AMail — running in the background")
     tray_menu = QMenu()
-    open_action = tray_menu.addAction("📬 Open OroStarMail")
+    open_action = tray_menu.addAction("📬 Open AMail")
     open_action.triggered.connect(lambda: _show_window(window))
     compose_action = tray_menu.addAction("✉ Compose")
     compose_action.triggered.connect(window.compose_new)
-    about_action = tray_menu.addAction("About OroStarMail")
+    about_action = tray_menu.addAction("About AMail")
 
     def _show_about():
         from .ui.about_dialog import AboutDialog
@@ -172,7 +172,7 @@ def main():
 
     about_action.triggered.connect(_show_about)
     tray_menu.addSeparator()
-    quit_action = tray_menu.addAction("Quit OroStarMail")
+    quit_action = tray_menu.addAction("Quit AMail")
 
     def _quit():
         window.shutdown()

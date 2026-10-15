@@ -1,4 +1,4 @@
-"""About OroStarMail — company and contact information."""
+"""About AMail — company and contact information."""
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
@@ -13,7 +13,7 @@ from . import theme
 class AboutDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("About OroStarMail")
+        self.setWindowTitle("About AMail")
         self.setFixedSize(380, 460)
 
         lay = QVBoxLayout(self)
@@ -29,7 +29,7 @@ class AboutDialog(QDialog):
         logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(logo)
 
-        name = QLabel("OroStarMail")
+        name = QLabel("AMail")
         f = name.font()
         f.setPointSize(20)
         f.setWeight(QFont.Weight.Bold)
@@ -51,18 +51,18 @@ class AboutDialog(QDialog):
         lay.addSpacing(10)
 
         company = QLabel(
-            "Developed by <b>Oro Star</b><br><br>"
+            "Developed by <b>AMail</b><br><br>"
             f"<a style='color:{theme.GOLD_DEEP}' "
-            "href='mailto:info@orostars.com'>info@orostars.com</a><br>"
+            "href='mailto:info@amail.app'>info@amail.app</a><br>"
             f"<a style='color:{theme.GOLD_DEEP}' "
-            "href='https://orostars.com'>orostars.com</a>")
+            "href='https://amail.app'>amail.app</a>")
         company.setAlignment(Qt.AlignmentFlag.AlignCenter)
         company.setOpenExternalLinks(True)
         company.setTextFormat(Qt.TextFormat.RichText)
         lay.addWidget(company)
 
         lay.addStretch(1)
-        copyright_ = QLabel("© 2026 Oro Star. All rights reserved.")
+        copyright_ = QLabel("© 2026 AMail. All rights reserved.")
         copyright_.setAlignment(Qt.AlignmentFlag.AlignCenter)
         copyright_.setStyleSheet(f"color: {theme.TEXT_FAINT}; font-size: 11px;")
         lay.addWidget(copyright_)

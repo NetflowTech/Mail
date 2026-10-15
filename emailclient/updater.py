@@ -17,7 +17,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-MANIFEST_URL = "https://orostars.com/orostarmail/updates/version.json"
+MANIFEST_URL = "https://amail.app/amail/updates/version.json"
 
 
 def _parse(v: str) -> tuple[int, ...] | None:
@@ -104,7 +104,7 @@ def _apply_update_mac(zip_path: Path) -> bool:
     helper that waits for us to quit, swaps the bundle, and relaunches. A running
     .app cannot replace itself, hence the helper."""
     import sys as _sys
-    # Current bundle: .../OroStarMail.app/Contents/MacOS/<exe> -> the .app dir.
+    # Current bundle: .../AMail.app/Contents/MacOS/<exe> -> the .app dir.
     exe = Path(_sys.executable).resolve()
     app_dir = exe
     while app_dir.suffix != ".app" and app_dir != app_dir.parent:

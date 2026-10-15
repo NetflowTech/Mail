@@ -1,6 +1,6 @@
-"""Shared HTTP helpers for talking to the OroStarMail server.
+"""Shared HTTP helpers for talking to the AMail server.
 
-Why this exists: orostars.com publishes both A and AAAA records. On a PC whose
+Why this exists: amail.app publishes both A and AAAA records. On a PC whose
 network advertises IPv6 but cannot actually route it (very common on consumer
 Windows setups), the OS hands out the AAAA address first and the connection
 just hangs until our timeout — so every server call fails with "could not reach
@@ -20,7 +20,7 @@ import urllib.request
 
 # Sent on every server call. Shared hosting WAFs treat the default
 # "Python-urllib/3.x" as a bot signature; a real product name avoids that.
-USER_AGENT = "OroStarMail"
+USER_AGENT = "AMail"
 
 
 def ssl_context() -> ssl.SSLContext:

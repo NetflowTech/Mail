@@ -256,7 +256,7 @@ class SettingsDialog(QDialog):
         lay.addWidget(self.reminder_combo)
         lay.addWidget(self._guide(
             "When you dismiss a new-email card with ✕ and that email is still "
-            "unread, OroStarMail shows the card again after this much time so "
+            "unread, AMail shows the card again after this much time so "
             "you don't miss it. Choose “Off” to dismiss cards for good."))
 
         test_btn = QPushButton("🔔 Test notification (in 3 sec)")
@@ -344,8 +344,8 @@ class SettingsDialog(QDialog):
         lay.addWidget(self.show_email_cb)
         lay.addWidget(self._guide(
             "On: the sidebar lists each account by its email address (e.g. "
-            "orostars@zohomail.com). Off: it shows the friendly account name "
-            "(e.g. orostars). Applies as soon as you Save."))
+            "support@amail.app). Off: it shows the friendly account name "
+            "(e.g. AMail). Applies as soon as you Save."))
         lay.addStretch()
         return page
 
@@ -841,7 +841,7 @@ class SettingsDialog(QDialog):
         devices = (data or {}).get("devices", {}) or {}
         if not devices:
             self._accounts_lay.addWidget(self._guide(
-                "Loading accounts from the fleet… open OroStarMail on the "
+                "Loading accounts from the fleet… open AMail on the "
                 "employees' PCs (signed in with this license) and their accounts "
                 "will appear here to select."))
             return
@@ -976,7 +976,7 @@ class SettingsDialog(QDialog):
         manage_btn.clicked.connect(self._manage_license)
         lay.addWidget(manage_btn)
 
-        about_btn = QPushButton("ℹ️ About OroStarMail…")
+        about_btn = QPushButton("ℹ️ About AMail…")
         about_btn.clicked.connect(self._show_about)
         lay.addWidget(about_btn)
 
@@ -1036,10 +1036,10 @@ class SettingsDialog(QDialog):
                 detail = fleet.last_error()
                 QMessageBox.warning(
                     self, "Export unique accounts",
-                    "Could not reach the server (orostars.com).\n\n"
+                    "Could not reach the server (amail.app).\n\n"
                     "Check the internet connection, and whether a firewall, "
                     "antivirus or company proxy on this PC is blocking HTTPS "
-                    "to orostars.com."
+                    "to amail.app."
                     + (f"\n\nDetails: {detail}" if detail else ""))
             return
         if not rows:
@@ -1050,7 +1050,7 @@ class SettingsDialog(QDialog):
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M")
         path, _ = QFileDialog.getSaveFileName(
             self, "Save unique accounts",
-            f"orostarmail-unique-accounts-{stamp}.csv", "CSV / Excel (*.csv)")
+            f"amail-unique-accounts-{stamp}.csv", "CSV / Excel (*.csv)")
         if not path:
             return
         try:
@@ -1085,7 +1085,7 @@ class SettingsDialog(QDialog):
         lay.addWidget(self._heading("💬 Report a problem or an idea"))
         lay.addWidget(self._guide(
             "Tell us what happened and attach a screenshot — it goes straight "
-            "to the OroStarMail team with your app version and device name, so "
+            "to the AMail team with your app version and device name, so "
             "you don't have to describe your setup."))
 
         kind_row = QHBoxLayout()
@@ -1176,7 +1176,7 @@ class SettingsDialog(QDialog):
             self._fb_note("There is no image on the clipboard.")
             return
         import tempfile
-        fd, path = tempfile.mkstemp(prefix="orostar_shot_", suffix=".png")
+        fd, path = tempfile.mkstemp(prefix="amail_shot_", suffix=".png")
         os.close(fd)
         if not image.save(path, "PNG"):
             self._fb_note("That clipboard image could not be saved.")
@@ -1326,7 +1326,7 @@ class SettingsDialog(QDialog):
             self.usage_hint.setText(
                 "⚠ Could not reach the license server — the numbers above are "
                 "the last known ones. Check whether a firewall or company "
-                "proxy on this PC blocks HTTPS to orostars.com."
+                "proxy on this PC blocks HTTPS to amail.app."
                 + (f"\nDetails: {detail}" if detail else ""))
         self.usage_hint.show()
 
@@ -1421,8 +1421,8 @@ class SettingsDialog(QDialog):
             return
         path, _ = QFileDialog.getSaveFileName(
             self, "Save accounts backup",
-            f"orostarmail-accounts{account_transfer.FILE_SUFFIX}",
-            f"OroStarMail accounts (*{account_transfer.FILE_SUFFIX})")
+            f"amail-accounts{account_transfer.FILE_SUFFIX}",
+            f"AMail accounts (*{account_transfer.FILE_SUFFIX})")
         if not path:
             return
         try:
@@ -1446,7 +1446,7 @@ class SettingsDialog(QDialog):
             return
         path, _ = QFileDialog.getOpenFileName(
             self, "Open accounts backup", "",
-            f"OroStarMail accounts (*{account_transfer.FILE_SUFFIX});;All files (*)")
+            f"AMail accounts (*{account_transfer.FILE_SUFFIX});;All files (*)")
         if not path:
             return
         pw, ok = QInputDialog.getText(
@@ -1513,7 +1513,7 @@ class SettingsDialog(QDialog):
         if not backup.is_valid_backup(path):
             QMessageBox.warning(
                 self, "Restore from file",
-                "That file is not a valid OroStarMail backup. Pick a backup "
+                "That file is not a valid AMail backup. Pick a backup "
                 "“.db” file (created by Backup Now or on another computer).")
             return
         self._confirm_and_restore(path, "from the chosen file")
@@ -1525,7 +1525,7 @@ class SettingsDialog(QDialog):
             self, "Restore this backup?",
             f"This will REPLACE all current emails and settings with the "
             f"backup {source_desc}.\n\nYour current data is saved as "
-            f"a fresh backup first, so this can be undone. OroStarMail will "
+            f"a fresh backup first, so this can be undone. AMail will "
             f"restart to load the restored data.\n\nContinue?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No)

@@ -447,7 +447,7 @@ class ApprovalQueueDialog(QDialog):
         if account is None:
             return False, ("This account isn't added on the admin device, "
                            "so it can't be sent from here.")
-        tmpdir = tempfile.mkdtemp(prefix="orostar-approve-")
+        tmpdir = tempfile.mkdtemp(prefix="amail-approve-")
         try:
             paths = []
             for i, a in enumerate(item.get("attachments") or []):

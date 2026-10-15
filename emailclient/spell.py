@@ -97,7 +97,7 @@ def _is_checkable(word: str) -> bool:
         return False
     if word.isupper():               # acronyms: IMAP, SMTP, VAT
         return False
-    # MixedCase in the middle of a word is a product name (OroStarMail, iPhone)
+    # MixedCase in the middle of a word is a product name (AMail, iPhone)
     if any(ch.isupper() for ch in word[1:]):
         return False
     return True

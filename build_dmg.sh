@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Build OroStarMail.dmg for macOS.
+# Build AMail.dmg for macOS.
 # Run from the repo root: ./build_dmg.sh
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
 VENV="$REPO/.venv"
 DIST="$REPO/dist"
-APP="$DIST/OroStarMail.app"
-DMG="$DIST/OroStarMail.dmg"
+APP="$DIST/AMail.app"
+DMG="$DIST/AMail.dmg"
 
 echo "==> Checking virtual environment..."
 if [ ! -f "$VENV/bin/python" ]; then
@@ -21,7 +21,7 @@ echo "==> Installing dependencies..."
 
 echo "==> Building app bundle..."
 cd "$REPO"
-"$VENV/bin/pyinstaller" OroStarMail.spec --noconfirm
+"$VENV/bin/pyinstaller" AMail.spec --noconfirm
 
 if [ ! -d "$APP" ]; then
     echo "ERROR: app bundle not found at $APP"
@@ -31,7 +31,7 @@ fi
 echo "==> Creating DMG..."
 rm -f "$DMG"
 hdiutil create \
-    -volname "OroStarMail" \
+    -volname "AMail" \
     -srcfolder "$APP" \
     -ov \
     -format UDZO \

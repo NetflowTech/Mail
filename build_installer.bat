@@ -1,5 +1,5 @@
 @echo off
-:: Build OroStarMail-Setup-1.4.7.exe using Inno Setup.
+:: Build AMail-Setup-1.4.7.exe using Inno Setup.
 :: Run AFTER build_exe.bat has completed successfully.
 :: Requires Inno Setup 6 installed from: jrsoftware.org/isinfo.php
 setlocal
@@ -27,8 +27,8 @@ if "%ISCC%"=="" (
 )
 echo Using: %ISCC%
 
-if not exist "%REPO%dist\OroStarMail\OroStarMail.exe" (
-    echo ERROR: dist\OroStarMail\OroStarMail.exe not found.
+if not exist "%REPO%dist\AMail\AMail.exe" (
+    echo ERROR: dist\AMail\AMail.exe not found.
     echo Run build_exe.bat first.
     exit /b 1
 )

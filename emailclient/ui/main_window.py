@@ -60,7 +60,7 @@ class MainWindow(QMainWindow):
         self.db = db
         self.engine = engine
         self._outbox = outbox_worker
-        self.setWindowTitle("OroStarMail")
+        self.setWindowTitle("AMail")
         # Start maximized, like Outlook — a mail client is a full-workspace app,
         # and the three panes (sidebar / list / reader) need the room. The
         # restore size below is what the window returns to when un-maximized.
@@ -84,7 +84,7 @@ class MainWindow(QMainWindow):
         self._notif_popup = None
         self._msg_windows = []   # standalone email windows (double-click to open)
         self._group_windows: list = []
-        self._settings = QSettings("OroStarMail", "ui")
+        self._settings = QSettings("AMail", "ui")
         self._license = LicenseManager()
         self._shutdown_done = False
 
@@ -127,7 +127,7 @@ class MainWindow(QMainWindow):
         tb = QToolBar()
         tb.setMovable(False)
         self.addToolBar(tb)
-        title = QLabel("✦ OroStarMail")
+        title = QLabel("✦ AMail")
         title.setObjectName("appTitle")
         tb.addWidget(title)
         compose_btn = QPushButton(" Compose")
@@ -263,7 +263,7 @@ class MainWindow(QMainWindow):
         exit_btn = QPushButton(" Exit")
         exit_btn.setIcon(editor_icons.icon("power", "#C0392B"))
         exit_btn.setIconSize(QSize(17, 17))
-        exit_btn.setToolTip("Exit — quit OroStarMail completely "
+        exit_btn.setToolTip("Exit — quit AMail completely "
                             "(stops background sync)")
         exit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         exit_btn.clicked.connect(self._exit_app)
@@ -696,7 +696,7 @@ class MainWindow(QMainWindow):
         dlg = SettingsDialog(self, license_manager=self._license)
         dlg.test_requested.connect(lambda: QTimer.singleShot(
             3000, lambda: self.toast.push(
-                0, "OroStarMail Test 🔔",
+                0, "AMail Test 🔔",
                 "If this appeared over Chrome/another app, everything works ✅",
                 theme.GOLD)))
         dlg.appearance_changed.connect(self._apply_appearance)
@@ -718,8 +718,8 @@ class MainWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
         box = QMessageBox(self)
-        box.setWindowTitle("Exit OroStarMail")
-        box.setText("Quit OroStarMail completely?\n\nBackground sync and new-email "
+        box.setWindowTitle("Exit AMail")
+        box.setText("Quit AMail completely?\n\nBackground sync and new-email "
                     "notifications will stop until you open it again.")
         box.setStandardButtons(QMessageBox.StandardButton.Yes
                                | QMessageBox.StandardButton.No)
@@ -821,7 +821,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"⏳ {n} email{'s' if n != 1 else ''} waiting for your approval", 8000)
         if NotifSettings().enabled:
-            notify.send("OroStarMail",
+            notify.send("AMail",
                         f"{n} email{'s' if n != 1 else ''} need your approval",
                         sound="default")
             if NotifSettings().sound_enabled:
@@ -1955,7 +1955,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("✅ Email sent", 5000)
         self._refresh_timer.start()
         if NotifSettings().enabled:
-            notify.send("OroStarMail", "Email sent ✅", sound="default")
+            notify.send("AMail", "Email sent ✅", sound="default")
 
     def _on_outbox_held(self, outbox_id: int):
         self.send_watch.resolve(outbox_id)
@@ -1972,7 +1972,7 @@ class MainWindow(QMainWindow):
         reason = send_errors.explain(error)
         self.statusBar().showMessage(f"❌ Email not sent — {reason}", 0)
         if NotifSettings().enabled:
-            notify.send("OroStarMail", "Email not sent — see the reason",
+            notify.send("AMail", "Email not sent — see the reason",
                         sound="default")
         self._show_send_failed(outbox_id, reason, str(error or ""))
 
@@ -2016,7 +2016,7 @@ class MainWindow(QMainWindow):
             f"⏳ Still sending “{subject}” — the mail server has not confirmed "
             f"it yet. It stays in the Outbox and keeps trying.", 0)
         if NotifSettings().enabled:
-            notify.send("OroStarMail", "Still sending — not confirmed yet",
+            notify.send("AMail", "Still sending — not confirmed yet",
                         sound=None)
 
     def _on_folder_created(self, acc_id: int):
@@ -2069,7 +2069,7 @@ class MainWindow(QMainWindow):
         if not self._settings.value("bg_hint_shown", False, type=bool):
             self._settings.setValue("bg_hint_shown", True)
             QMessageBox.information(
-                self, "OroStarMail",
+                self, "AMail",
                 "The app keeps running in the background — emails and"
                 " notifications keep arriving.\nTo quit completely, use the"
-                " menu-bar icon → Quit OroStarMail.")
+                " menu-bar icon → Quit AMail.")
