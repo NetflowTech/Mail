@@ -13,3 +13,4 @@ winotify>=1.1; sys_platform == 'win32'
 msal>=1.28
 pyobjc-core>=10; sys_platform == "darwin"
 pyobjc-framework-Cocoa>=10; sys_platform == "darwin"
+pyobjc-framework-UserNotifications>=10; sys_platform == "darwin"
