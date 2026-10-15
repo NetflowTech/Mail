@@ -16,7 +16,10 @@ import threading
 # initialises (MainWindow imports it lazily inside main()).
 os.environ.setdefault(
     "QTWEBENGINE_CHROMIUM_FLAGS",
-    "--disable-gpu --disable-gpu-compositing --disable-software-rasterizer")
+    "--disable-gpu --disable-gpu-compositing")
+# Frozen .app: Chromium's sandbox conflicts with PyInstaller's bundle layout,
+# causing a CrBrowserMain SIGABRT on launch. Disable it.
+os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
 
 # Point all SSL users (urllib, requests/MSAL, smtplib) to the bundled certifi
 # CA store — macOS Python does not use the system keychain by default, so
