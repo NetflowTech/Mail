@@ -35,7 +35,7 @@ if exist "C:\Program Files\OroStarMail" (
     rd /s /q "C:\Program Files\OroStarMail"
 )
 if exist "C:\Program Files (x86)\OroStarMail" (
-    echo Removing C:\Program Files (x86)\OroStarMail ...
+    echo Removing OroStarMail from Program Files x86...
     rd /s /q "C:\Program Files (x86)\OroStarMail"
 )
 
