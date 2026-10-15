@@ -29,7 +29,7 @@ if not "%UNINSTALLER%"=="" (
 :: -- 2. Kill process if somehow still running -----------------------------
 taskkill /f /im OroStarMail.exe >nul 2>&1
 
-:: -- 3. Remove leftover Program Files folder ------------------------------
+:: -- 3. Remove leftover install folders -----------------------------------
 if exist "C:\Program Files\OroStarMail" (
     echo Removing C:\Program Files\OroStarMail ...
     rd /s /q "C:\Program Files\OroStarMail"
@@ -37,6 +37,10 @@ if exist "C:\Program Files\OroStarMail" (
 if exist "C:\Program Files (x86)\OroStarMail" (
     echo Removing OroStarMail from Program Files x86...
     rd /s /q "C:\Program Files (x86)\OroStarMail"
+)
+if exist "%LOCALAPPDATA%\Programs\OroStarMail" (
+    echo Removing user-level OroStarMail install...
+    rd /s /q "%LOCALAPPDATA%\Programs\OroStarMail"
 )
 
 :: -- 4. Remove user data folder (mail cache) ------------------------------
