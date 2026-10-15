@@ -17,7 +17,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-MANIFEST_URL = "https://amail.app/amail/updates/version.json"
+MANIFEST_URL = "https://raw.githubusercontent.com/ahaarij/Mail/main/version.json"
 
 
 def _parse(v: str) -> tuple[int, ...] | None:
@@ -38,8 +38,12 @@ def is_newer(remote: str, local: str) -> bool:
 
 
 def fetch_manifest(url: str = MANIFEST_URL, timeout: float = 8.0) -> dict | None:
-    """LOCAL ONLY: no server communication."""
-    return None
+    """Fetch and parse the version manifest JSON. Returns None on any failure."""
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            return json.loads(resp.read().decode())
+    except Exception:
+        return None
 
 
 def _current_platform() -> str:
@@ -75,8 +79,30 @@ def check_only(local_version: str, url: str = MANIFEST_URL) -> dict | None:
 
 def download_and_verify(url: str, sha256: str, dest: Path,
                         timeout: float = 60.0, progress=None) -> bool:
-    """LOCAL ONLY: no server communication."""
-    return False
+    """Download *url* to *dest*, verify sha256, return True on success."""
+    dest = Path(dest)
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            total = int(resp.headers.get("Content-Length") or 0)
+            done = 0
+            h = hashlib.sha256()
+            with open(dest, "wb") as f:
+                while True:
+                    chunk = resp.read(65536)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    h.update(chunk)
+                    done += len(chunk)
+                    if progress and total:
+                        progress(done / total)
+        if sha256 and h.hexdigest().lower() != sha256.lower():
+            dest.unlink(missing_ok=True)
+            return False
+        return True
+    except Exception:
+        dest.unlink(missing_ok=True)
+        return False
 
 
 def apply_update(installer_path: Path) -> bool:

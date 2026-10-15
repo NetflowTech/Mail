@@ -31,9 +31,10 @@ try:
 except Exception:
     pass
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QObject, Signal
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
-from PySide6.QtWidgets import QApplication, QMenu, QSplashScreen, QSystemTrayIcon
+from PySide6.QtWidgets import (QApplication, QMenu, QMessageBox,
+                                QProgressDialog, QSplashScreen, QSystemTrayIcon)
 
 from .paths import asset_dir
 from .ui import message_list, theme
@@ -111,6 +112,10 @@ def _tray_icon() -> QIcon:
         return QIcon(_fallback_tray_pixmap())
     return QIcon(pm.scaled(22, 22, Qt.AspectRatioMode.KeepAspectRatio,
                            Qt.TransformationMode.SmoothTransformation))
+
+
+class _UpdateSignaller(QObject):
+    update_available = Signal(dict)
 
 
 def _show_window(window: MainWindow) -> None:
@@ -208,10 +213,61 @@ def main():
     splash.finish(window)  # auto-dismiss once the main window is up (no click)
 
 
-    # Background update check: a few seconds after launch so it never
-    # competes with startup work; marshals the prompt back to the UI thread.
-    # check_only() never raises and returns None on any failure/no-update,
-    # so a bad network or missing manifest silently does nothing.
+    from . import updater as _updater
+    from . import __version__ as _ver
+    import tempfile as _tempfile
+
+    _sig = _UpdateSignaller()
+
+    def _on_update(manifest: dict) -> None:
+        asset = _updater.platform_asset(manifest)
+        if asset is None:
+            return
+        url, sha256 = asset
+        new_ver = manifest.get("version", "")
+        reply = QMessageBox.question(
+            window,
+            "AMail Update Available",
+            f"AMail {new_ver} is available (you have {_ver}).\n\nInstall now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        tmp = _tempfile.NamedTemporaryFile(
+            suffix=".exe", delete=False,
+            dir=_tempfile.gettempdir())
+        tmp.close()
+        dest = tmp.name
+
+        prog = QProgressDialog("Downloading update…", None, 0, 100, window)
+        prog.setWindowTitle("AMail Update")
+        prog.setMinimumDuration(0)
+        prog.setValue(0)
+        prog.show()
+        app.processEvents()
+
+        ok = _updater.download_and_verify(
+            url, sha256, dest,
+            progress=lambda p: (prog.setValue(int(p * 100)), app.processEvents()))
+        prog.close()
+        if not ok:
+            QMessageBox.warning(window, "AMail Update",
+                                "Download failed or file was corrupt.\nTry again later.")
+            return
+        if _updater.apply_update(dest):
+            window.shutdown()
+            app.quit()
+
+    _sig.update_available.connect(_on_update)
+
+    def _check_update():
+        import time
+        time.sleep(12)
+        manifest = _updater.check_only(_ver)
+        if manifest:
+            _sig.update_available.emit(manifest)
+
+    threading.Thread(target=_check_update, daemon=True).start()
     threading.Thread(target=crashlog.upload_pending, daemon=True).start()
 
     engine.start_all()
