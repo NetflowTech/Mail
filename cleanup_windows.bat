@@ -65,11 +65,9 @@ if exist "%USERPROFILE%\Desktop\OroStarMail.lnk" (
 
 :: -- 8. Remove Windows Credential Manager entries -------------------------
 echo Removing stored credentials...
-cmdkey /list | findstr /i "orostarmail" >nul 2>&1
-if not errorlevel 1 (
-    for /f "tokens=2 delims= " %%a in ('cmdkey /list ^| findstr /i "orostarmail"') do (
-        cmdkey /delete:%%a >nul 2>&1
-    )
+for /f "tokens=2*" %%a in ('cmdkey /list ^| findstr /i "Target:"') do (
+    echo %%b | findstr /i "orostarmail" >nul 2>&1
+    if not errorlevel 1 cmdkey /delete:%%b >nul 2>&1
 )
 
 echo.
