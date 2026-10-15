@@ -1,37 +1,58 @@
+
 @echo off
-:: Build AMail.exe for Windows.
-:: Run from the repo root: build_exe.bat
-:: Requires Python 3.10+ on PATH.
-setlocal enabledelayedexpansion
+setlocal
+cd /d "%~dp0"
 
-set REPO=%~dp0
-set VENV=%REPO%.venv
-set DIST=%REPO%dist
-set EXE=%DIST%\AMail\AMail.exe
+set "REPO=%CD%"
+set "VENV=%REPO%\.venv"
+set "PYTHON=%VENV%\Scripts\python.exe"
 
-echo =^> Checking virtual environment...
-if not exist "%VENV%\Scripts\python.exe" (
-    echo Creating .venv...
-    python -m venv "%VENV%"
-    if errorlevel 1 ( echo ERROR: python -m venv failed & exit /b 1 )
-)
+echo.
+echo Checking project folder...
+echo "%REPO%"
+echo.
 
-echo =^> Installing dependencies...
-"%VENV%\Scripts\pip" install --quiet -r "%REPO%requirements.txt"
-if errorlevel 1 ( echo ERROR: pip install failed & exit /b 1 )
-"%VENV%\Scripts\pip" install --quiet pyinstaller
-if errorlevel 1 ( echo ERROR: pip install pyinstaller failed & exit /b 1 )
-
-echo =^> Building EXE...
-cd /d "%REPO%"
-"%VENV%\Scripts\pyinstaller" AMail.spec --noconfirm
-if errorlevel 1 ( echo ERROR: PyInstaller failed & exit /b 1 )
-
-if not exist "%EXE%" (
-    echo ERROR: EXE not found at %EXE%
+if not exist "%REPO%\requirements.txt" (
+    echo ERROR: requirements.txt not found.
+    pause
     exit /b 1
 )
 
+echo Checking virtual environment...
+
+if exist "%VENV%" (
+    echo Removing incomplete virtual environment...
+    rmdir /s /q "%VENV%"
+)
+
+py -m venv "%VENV%"
+if errorlevel 1 (
+    echo ERROR: Could not create virtual environment.
+    pause
+    exit /b 1
+)
+
+echo Installing dependencies...
+"%PYTHON%" -m pip install --upgrade pip
+if errorlevel 1 goto :error
+
+"%PYTHON%" -m pip install -r "%REPO%\requirements.txt"
+if errorlevel 1 goto :error
+
+"%PYTHON%" -m pip install pyinstaller
+if errorlevel 1 goto :error
+
+echo Building Windows application...
+"%PYTHON%" -m PyInstaller "%REPO%\AMail.spec" --noconfirm
+if errorlevel 1 goto :error
+
 echo.
-echo Done: %EXE%
-dir "%EXE%"
+echo Build completed. Check the dist folder.
+pause
+exit /b 0
+
+:error
+echo.
+echo ERROR: Build process failed.
+pause
+exit /b 1

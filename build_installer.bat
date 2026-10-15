@@ -1,42 +1,77 @@
+
 @echo off
-:: Build AMail-Setup-2.0.0.exe using Inno Setup.
-:: Run AFTER build_exe.bat has completed successfully.
-:: Requires Inno Setup 6 installed from: jrsoftware.org/isinfo.php
 setlocal
+cd /d "%~dp0"
 
-set REPO=%~dp0
-set ISS=%REPO%installer.iss
-set OUTDIR=%REPO%installer_output
+set "REPO=%~dp0"
+set "ISS=%REPO%installer.iss"
+set "OUTDIR=%REPO%installer_output"
+set "ISCC="
+if exist "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" set "ISCC=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
 
-:: Find ISCC.exe — check common install paths then fall back to registry
-set ISCC=
-if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" set "ISCC=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-if exist "C:\Program Files\Inno Setup 6\ISCC.exe"       set "ISCC=C:\Program Files\Inno Setup 6\ISCC.exe"
+echo Searching for Inno Setup 6...
 
-:: Registry fallback — works for any 6.x version including 6.7.x
-if "%ISCC%"=="" (
-    for /f "tokens=2*" %%a in ('reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1" /v "InstallLocation" 2^>nul') do set "ISCC=%%bISCC.exe"
-)
-if "%ISCC%"=="" (
-    for /f "tokens=2*" %%a in ('reg query "HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1" /v "InstallLocation" 2^>nul') do set "ISCC=%%bISCC.exe"
+:: Standard installation paths
+if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" (
+    set "ISCC=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
 )
 
-if "%ISCC%"=="" (
-    echo ERROR: Inno Setup 6 not found. Make sure it is installed.
+if not defined ISCC if exist "%ProgramFiles%\Inno Setup 6\ISCC.exe" (
+    set "ISCC=%ProgramFiles%\Inno Setup 6\ISCC.exe"
+)
+
+:: Check registry installation paths
+if not defined ISCC (
+    for /f "tokens=2,*" %%A in ('reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1" /v InstallLocation 2^>nul') do (
+        if /i "%%A"=="InstallLocation" set "ISCC=%%BISCC.exe"
+    )
+)
+
+if not defined ISCC (
+    for /f "tokens=2,*" %%A in ('reg query "HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1" /v InstallLocation 2^>nul') do (
+        if /i "%%A"=="InstallLocation" set "ISCC=%%BISCC.exe"
+    )
+)
+
+:: Check common alternative location
+if not defined ISCC if exist "C:\InnoSetup\ISCC.exe" (
+    set "ISCC=C:\InnoSetup\ISCC.exe"
+)
+
+if not defined ISCC (
+    echo ERROR: Could not locate ISCC.exe.
+    echo Please locate ISCC.exe on your computer.
+    pause
     exit /b 1
 )
-echo Using: %ISCC%
+
+echo Found compiler: "%ISCC%"
+
+if not exist "%ISS%" (
+    echo ERROR: installer.iss not found.
+    pause
+    exit /b 1
+)
 
 if not exist "%REPO%dist\AMail\AMail.exe" (
-    echo ERROR: dist\AMail\AMail.exe not found.
-    echo Run build_exe.bat first.
+    echo ERROR: Application executable not found.
+    echo Run build_exe.bat successfully first.
+    pause
     exit /b 1
 )
 
-echo =^> Building installer...
-"%ISCC%" "%ISS%"
-if errorlevel 1 ( echo ERROR: Inno Setup compilation failed & exit /b 1 )
+if not exist "%OUTDIR%" mkdir "%OUTDIR%"
 
 echo.
-echo Done:
+echo Building installer...
+"%ISCC%" "%ISS%"
+if errorlevel 1 (
+    echo ERROR: Inno Setup compilation failed.
+    pause
+    exit /b 1
+)
+
+echo.
+echo Installer build finished.
 dir "%OUTDIR%\*.exe"
+pause
