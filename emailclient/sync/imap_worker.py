@@ -493,7 +493,10 @@ class ImapWorker(QThread):
             if not password:
                 self.status_changed.emit(self.account.id, "error")
                 raise AuthError("no password stored")
-            client.login(self.account.email, password)
+            try:
+                client.login(self.account.email, password)
+            except UnicodeEncodeError:
+                raise AuthError("password contains non-ASCII characters — update it in Settings")
         client.select_folder("INBOX")
         return client
 
