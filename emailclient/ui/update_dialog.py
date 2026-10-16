@@ -47,12 +47,12 @@ class UpdateDialog(QDialog):
         row.addWidget(self.install_btn)
         lay.addLayout(row)
 
-    def set_progress(self, done: int, total: int | None) -> None:
-        """Show a download bar; call from the UI thread."""
+    def set_progress(self, ratio: float | None) -> None:
+        """Show a download bar; call from the UI thread. ratio=None → indeterminate."""
         self.progress.setVisible(True)
         self.install_btn.setEnabled(False)
-        if total:
-            self.progress.setRange(0, total)
-            self.progress.setValue(done)
+        if ratio is not None:
+            self.progress.setRange(0, 100)
+            self.progress.setValue(int(ratio * 100))
         else:
             self.progress.setRange(0, 0)  # indeterminate

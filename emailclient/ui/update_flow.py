@@ -22,11 +22,11 @@ def run_update_flow(parent, manifest: dict) -> None:
         return
     url, sha = asset
     dest = Path(tempfile.gettempdir()) / Path(url).name
-    dlg.set_progress(0, None)
+    dlg.set_progress(None)
     dlg.show()
 
-    def _progress(done, total):
-        QTimer.singleShot(0, lambda: dlg.set_progress(done, total))
+    def _progress(ratio):
+        QTimer.singleShot(0, lambda: dlg.set_progress(ratio))
 
     def _worker():
         ok = updater.download_and_verify(url, sha, dest, progress=_progress)

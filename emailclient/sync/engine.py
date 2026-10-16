@@ -110,4 +110,6 @@ class SyncEngine(QObject):
             if w.isRunning():
                 w.terminate()
                 w.wait(500)
-        self.workers.clear()
+        # Do not clear self.workers — dropping QThread references while the
+        # underlying thread is still alive triggers "QThread: Destroyed while
+        # thread is still running". The process is exiting; let the OS clean up.
