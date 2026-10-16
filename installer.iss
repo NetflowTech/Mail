@@ -5,7 +5,7 @@
 ; Fully offline — no download URLs, no update endpoints, no telemetry.
 
 #define AppName    "AMail"
-#define AppVersion "2.0.1"
+#define AppVersion "2.0.2"
 #define AppExe     "AMail.exe"
 #define SourceDir  "dist\AMail"
 
