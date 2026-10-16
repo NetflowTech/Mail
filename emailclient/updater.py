@@ -39,8 +39,12 @@ def is_newer(remote: str, local: str) -> bool:
 
 def fetch_manifest(url: str = MANIFEST_URL, timeout: float = 8.0) -> dict | None:
     """Fetch and parse the version manifest JSON. Returns None on any failure."""
+    if not url.startswith("https://"):
+        return None
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        from . import nethttp
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, context=nethttp.ssl_context(), timeout=timeout) as resp:
             return json.loads(resp.read().decode())
     except Exception:
         return None
@@ -80,9 +84,14 @@ def check_only(local_version: str, url: str = MANIFEST_URL) -> dict | None:
 def download_and_verify(url: str, sha256: str, dest: Path,
                         timeout: float = 60.0, progress=None) -> bool:
     """Download *url* to *dest*, verify sha256, return True on success."""
+    if not url.startswith("https://"):
+        return False
+    if not sha256 or len(sha256) != 64:
+        return False
     dest = Path(dest)
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        from . import nethttp
+        with urllib.request.urlopen(url, context=nethttp.ssl_context(), timeout=timeout) as resp:
             total = int(resp.headers.get("Content-Length") or 0)
             done = 0
             h = hashlib.sha256()
@@ -96,7 +105,7 @@ def download_and_verify(url: str, sha256: str, dest: Path,
                     done += len(chunk)
                     if progress and total:
                         progress(done / total)
-        if sha256 and h.hexdigest().lower() != sha256.lower():
+        if h.hexdigest().lower() != sha256.lower():
             dest.unlink(missing_ok=True)
             return False
         return True
