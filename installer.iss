@@ -5,7 +5,7 @@
 ; Fully offline — no download URLs, no update endpoints, no telemetry.
 
 #define AppName    "AMail"
-#define AppVersion "2.0.3"
+#define AppVersion "2.0.4"
 #define AppExe     "AMail.exe"
 #define SourceDir  "dist\AMail"
 
@@ -21,7 +21,9 @@ AppSupportURL=
 AppUpdatesURL=
 
 ; ── Install location ─────────────────────────────────────────────────────────
-DefaultDirName={autopf}\{#AppName}
+; Upgrade in place: if a 32-bit install exists (from an older manual build),
+; keep installing there so the existing shortcut and uninstall entry still work.
+DefaultDirName={code:GetInstallDir}
 DefaultGroupName={#AppName}
 AllowNoIcons=yes
 
@@ -90,6 +92,14 @@ Filename: "taskkill.exe"; Parameters: "/f /im {#AppExe}"; Flags: runhidden skipi
 [Registry]
 
 [Code]
+
+function GetInstallDir(Param: String): String;
+begin
+  if DirExists(ExpandConstant('{pf32}\{#AppName}')) then
+    Result := ExpandConstant('{pf32}\{#AppName}')
+  else
+    Result := ExpandConstant('{autopf}\{#AppName}');
+end;
 
 function InitializeSetup(): Boolean;
 var
