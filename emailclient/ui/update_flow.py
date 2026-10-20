@@ -21,6 +21,7 @@ def run_update_flow(parent, manifest: dict) -> None:
     if asset is None:
         return
     url, sha = asset
+    sig_url = updater.platform_sig_url(manifest)
     dest = Path(tempfile.gettempdir()) / Path(url).name
     dlg.set_progress(None)
     dlg.show()
@@ -29,7 +30,8 @@ def run_update_flow(parent, manifest: dict) -> None:
         QTimer.singleShot(0, lambda: dlg.set_progress(ratio))
 
     def _worker():
-        ok = updater.download_and_verify(url, sha, dest, progress=_progress)
+        ok = updater.download_and_verify(url, sha, dest, progress=_progress,
+                                         sig_url=sig_url)
         QTimer.singleShot(0, lambda: _finish(ok))
 
     def _finish(ok):

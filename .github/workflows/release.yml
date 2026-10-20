@@ -57,10 +57,12 @@ jobs:
       - name: Update version.json
         shell: pwsh
         run: |
+          $base = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/AMail-Setup-${{ steps.ver.outputs.version }}.exe"
           $json = [ordered]@{
-            version  = "${{ steps.ver.outputs.version }}"
-            win_url  = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/AMail-Setup-${{ steps.ver.outputs.version }}.exe"
+            version    = "${{ steps.ver.outputs.version }}"
+            win_url    = $base
             win_sha256 = "${{ steps.sha256.outputs.hash }}"
+            win_sig_url = "$base.minisig"
           } | ConvertTo-Json
           $json | Set-Content version.json -Encoding UTF8
 

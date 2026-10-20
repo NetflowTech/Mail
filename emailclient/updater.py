@@ -7,6 +7,7 @@ license.py) and a per-module URL constant.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -17,7 +18,39 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-MANIFEST_URL = "https://raw.githubusercontent.com/ahaarij/Mail/main/version.json"
+MANIFEST_URL = "https://raw.githubusercontent.com/NetflowTech/Mail/main/version.json"
+
+# Minisign public key — Ed25519, generated on the deployment server.
+# The matching private key never leaves that machine.
+_MINISIGN_PUBLIC_KEY = "RWSwsBNAhlE3D4MVOq+eY+Hyy7EhCPmm2Bz296ATJY/0ujcqyJ6X0BlH"
+
+
+def _verify_minisign(file_path: Path, sig_path: Path) -> bool:
+    """Verify a minisign Ed25519 signature against the embedded public key.
+
+    Minisign .minisig layout (line 1 after base64-decode):
+      bytes[0:2]  — algorithm tag ("Ed")
+      bytes[2:10] — 8-byte key ID (must match public key)
+      bytes[10:74] — 64-byte Ed25519 signature over file content
+    """
+    try:
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        from cryptography.exceptions import InvalidSignature  # noqa: F401
+
+        pub_raw = base64.b64decode(_MINISIGN_PUBLIC_KEY)
+        pub_key_id = pub_raw[2:10]
+        pub_key = Ed25519PublicKey.from_public_bytes(pub_raw[10:42])
+
+        lines = Path(sig_path).read_text(encoding="utf-8").splitlines()
+        sig_raw = base64.b64decode(lines[1])
+        if sig_raw[2:10] != pub_key_id:
+            return False
+        signature = sig_raw[10:74]
+
+        pub_key.verify(signature, Path(file_path).read_bytes())
+        return True
+    except Exception:
+        return False
 
 
 def _parse(v: str) -> tuple[int, ...] | None:
@@ -68,6 +101,13 @@ def platform_asset(manifest: dict, platform: str | None = None) -> tuple[str, st
     return url, sha
 
 
+def platform_sig_url(manifest: dict, platform: str | None = None) -> str | None:
+    """Return the minisign signature URL for this platform, or None if absent."""
+    plat = platform or _current_platform()
+    sig = str(manifest.get(f"{plat}_sig_url", "")).strip()
+    return sig if sig else None
+
+
 def check_only(local_version: str, url: str = MANIFEST_URL) -> dict | None:
     """Return the manifest iff a newer build exists for this platform, else
     None. Safe to call off the UI thread; never raises."""
@@ -82,8 +122,10 @@ def check_only(local_version: str, url: str = MANIFEST_URL) -> dict | None:
 
 
 def download_and_verify(url: str, sha256: str, dest: Path,
-                        timeout: float = 60.0, progress=None) -> bool:
-    """Download *url* to *dest*, verify sha256, return True on success."""
+                        timeout: float = 60.0, progress=None,
+                        sig_url: str | None = None) -> bool:
+    """Download *url* to *dest*, verify SHA-256 and (if provided) minisign
+    signature. Returns True only when all checks pass."""
     if not url.startswith("https://"):
         return False
     if not sha256 or len(sha256) != 64:
@@ -108,6 +150,22 @@ def download_and_verify(url: str, sha256: str, dest: Path,
         if h.hexdigest().lower() != sha256.lower():
             dest.unlink(missing_ok=True)
             return False
+
+        if sig_url:
+            if not sig_url.startswith("https://"):
+                dest.unlink(missing_ok=True)
+                return False
+            sig_dest = dest.with_suffix(dest.suffix + ".minisig")
+            try:
+                with urllib.request.urlopen(
+                        sig_url, context=nethttp.ssl_context(), timeout=30.0) as resp:
+                    sig_dest.write_bytes(resp.read())
+                if not _verify_minisign(dest, sig_dest):
+                    dest.unlink(missing_ok=True)
+                    return False
+            finally:
+                sig_dest.unlink(missing_ok=True)
+
         return True
     except Exception:
         dest.unlink(missing_ok=True)
