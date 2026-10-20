@@ -1,6 +1,6 @@
 {
-  "version": "2.0.6",
-  "win_url": "https://github.com/NetflowTech/Mail/releases/download/v2.0.6/AMail-Setup-2.0.6.exe",
-  "win_sha256": "1f1add2dae46056830647031876516faef8471691cf631f9b40663082ef67b38",
-  "win_sig_url": "https://github.com/NetflowTech/Mail/releases/download/v2.0.6/AMail-Setup-2.0.6.exe.minisig"
+  "version": "2.0.7",
+  "win_url": "https://github.com/NetflowTech/Mail/releases/download/v2.0.7/AMail-Setup-2.0.7.exe",
+  "win_sha256": "a90b0286f628dee876a1f648e9caa98fa0ed4013e8fa602ca2672ac0a265dbfd",
+  "win_sig_url": "https://github.com/NetflowTech/Mail/releases/download/v2.0.7/AMail-Setup-2.0.7.exe.minisig"
 }
