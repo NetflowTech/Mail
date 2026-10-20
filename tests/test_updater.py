@@ -116,11 +116,31 @@ class TestCheckOnly:
         import sys
         manifest = {"version": "2.0.0",
                     f"{u._current_platform()}_url": "http://x/a.zip",
-                    f"{u._current_platform()}_sha256": "x"}
+                    f"{u._current_platform()}_sha256": "x",
+                    f"{u._current_platform()}_sig_url": "https://x/a.zip.minisig"}
         monkeypatch.setattr(u, "fetch_manifest", lambda url: manifest)
         result = check_only("1.0.0")
         assert result is not None
         assert result["version"] == "2.0.0"
+
+    def test_returns_none_when_signature_missing(self, monkeypatch):
+        import emailclient.updater as u
+        manifest = {"version": "2.0.0",
+                    f"{u._current_platform()}_url": "https://x/a.zip",
+                    f"{u._current_platform()}_sha256": "a" * 64}
+        monkeypatch.setattr(u, "fetch_manifest", lambda url: manifest)
+        assert check_only("1.0.0") is None
+
+    def test_download_refuses_without_signature(self, tmp_path, monkeypatch):
+        import emailclient.updater as u
+        def _no_network(*a, **k):
+            raise AssertionError("must not download without a signature URL")
+        monkeypatch.setattr(u.urllib.request, "urlopen", _no_network)
+        dest = tmp_path / "a.exe"
+        assert u.download_and_verify("https://x/a.exe", "a" * 64, dest) is False
+        assert u.download_and_verify("https://x/a.exe", "a" * 64, dest,
+                                     sig_url="http://x/a.exe.minisig") is False
+        assert not dest.exists()
 
     def test_returns_none_when_no_asset_for_platform(self, monkeypatch):
         import emailclient.updater as u

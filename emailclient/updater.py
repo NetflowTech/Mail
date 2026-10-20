@@ -130,7 +130,7 @@ def check_only(local_version: str, url: str = MANIFEST_URL) -> dict | None:
         return None
     if not is_newer(str(manifest.get("version", "")), local_version):
         return None
-    if platform_asset(manifest) is None:
+    if platform_asset(manifest) is None or platform_sig_url(manifest) is None:
         return None
     return manifest
 
@@ -138,11 +138,13 @@ def check_only(local_version: str, url: str = MANIFEST_URL) -> dict | None:
 def download_and_verify(url: str, sha256: str, dest: Path,
                         timeout: float = 60.0, progress=None,
                         sig_url: str | None = None) -> bool:
-    """Download *url* to *dest*, verify SHA-256 and (if provided) minisign
-    signature. Returns True only when all checks pass."""
+    """Download *url* to *dest*, verify SHA-256 and the minisign signature.
+    Returns True only when all checks pass; a missing signature is a failure."""
     if not url.startswith("https://"):
         return False
     if not sha256 or len(sha256) != 64:
+        return False
+    if not sig_url or not sig_url.startswith("https://"):
         return False
     dest = Path(dest)
     try:
@@ -165,20 +167,16 @@ def download_and_verify(url: str, sha256: str, dest: Path,
             dest.unlink(missing_ok=True)
             return False
 
-        if sig_url:
-            if not sig_url.startswith("https://"):
+        sig_dest = dest.with_suffix(dest.suffix + ".minisig")
+        try:
+            with urllib.request.urlopen(
+                    sig_url, context=nethttp.ssl_context(), timeout=30.0) as resp:
+                sig_dest.write_bytes(resp.read())
+            if not _verify_minisign(dest, sig_dest):
                 dest.unlink(missing_ok=True)
                 return False
-            sig_dest = dest.with_suffix(dest.suffix + ".minisig")
-            try:
-                with urllib.request.urlopen(
-                        sig_url, context=nethttp.ssl_context(), timeout=30.0) as resp:
-                    sig_dest.write_bytes(resp.read())
-                if not _verify_minisign(dest, sig_dest):
-                    dest.unlink(missing_ok=True)
-                    return False
-            finally:
-                sig_dest.unlink(missing_ok=True)
+        finally:
+            sig_dest.unlink(missing_ok=True)
 
         return True
     except Exception:
