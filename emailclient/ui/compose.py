@@ -1875,15 +1875,13 @@ class ComposeDialog(QDialog):
 
     def _save_quoted_attachment(self, path: str):
         """The original-message viewer (opened during a reply) had an attachment
-        clicked — open it through the main window's preview/save flow if available,
-        else fall back to the OS default app."""
+        clicked — open it through the main window's preview/save flow, which
+        only accepts files inside the app's own attachment folders."""
         mw = self.parent()
         while mw is not None and not hasattr(mw, "_open_attachment"):
             mw = mw.parent()
         if mw is not None:
             mw._open_attachment(path)
-        elif os.path.isfile(path):
-            QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     def _attach_forwarded_files(self, original: EmailMessage):
         """Carry the original message's real attachments into the forward so they

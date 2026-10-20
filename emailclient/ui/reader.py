@@ -313,9 +313,11 @@ def _attachment_chips_html(attachments_json: str) -> str:
 class _MailPage(QWebEnginePage):
     link_activated = Signal(QUrl)   # any link the user clicked
     image_activated = Signal(int)   # a body image the user clicked (zoom index)
+    allowed_url: QUrl | None = None  # the page the Reader itself rendered
 
     def acceptNavigationRequest(self, url: QUrl, nav_type, is_main_frame):
-        if nav_type == QWebEnginePage.NavigationType.NavigationTypeLinkClicked:
+        NT = QWebEnginePage.NavigationType
+        if nav_type == NT.NavigationTypeLinkClicked:
             if url.scheme() == "amailimg":
                 # href="amailimg:N" — N indexes the reader's image list.
                 try:
@@ -325,7 +327,14 @@ class _MailPage(QWebEnginePage):
                 return False
             self.link_activated.emit(url)
             return False
-        return True
+        # Email HTML must never navigate the pane: meta refresh, form submits,
+        # iframes and history all land here. Only the Reader's own render loads.
+        if not is_main_frame:
+            return False
+        if self.allowed_url is not None and url == self.allowed_url:
+            return True
+        return (nav_type == NT.NavigationTypeTyped
+                and url.scheme() in ("data", "about"))
 
     def featurePermissionRequested(self, url: QUrl, feature) -> None:
         # Deny every device permission Chromium might request (microphone,
@@ -384,16 +393,26 @@ class Reader(QWebEngineView):
             from ..config import data_dir
             path = data_dir() / f"reader_view_{self._render_id}.html"
             path.write_text(html_str, encoding="utf-8")
-            self.load(QUrl.fromLocalFile(str(path)))
+            target = QUrl.fromLocalFile(str(path))
+            self.page().allowed_url = target
+            self.load(target)
         except Exception:
+            self.page().allowed_url = None
             self.setContent(html_str.encode("utf-8"), "text/html;charset=utf-8")
+
+    _EXTERNAL_SCHEMES = ("http", "https", "mailto")
 
     def _on_link(self, url: QUrl):
         # Attachments are local file:// links → let the app save them; web links
-        # open in the system browser.
+        # open in the system browser. Any other scheme (search-ms:, ms-*:, …)
+        # would hand an attacker-chosen URL to an OS protocol handler: ignore it.
         if url.isLocalFile():
+            # file://host/share is a network path: resolving it makes Windows
+            # connect to that host and send the user's NTLM hash.
+            if url.host():
+                return
             self.attachment_clicked.emit(url.toLocalFile())
-        else:
+        elif url.scheme().lower() in self._EXTERNAL_SCHEMES:
             QDesktopServices.openUrl(url)
 
     def _on_image(self, index: int):

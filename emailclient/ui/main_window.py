@@ -1684,6 +1684,10 @@ class MainWindow(QMainWindow):
         from ..config import data_dir
         if not src_path:
             return None
+        # Reject network paths before any filesystem call: even realpath/isfile
+        # on \\host\share makes Windows connect and send the user's NTLM hash.
+        if src_path.startswith(("\\\\", "//")):
+            return None
         real = os.path.realpath(src_path)
         if not os.path.isfile(real):
             return None
