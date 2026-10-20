@@ -28,14 +28,12 @@ _MINISIGN_PUBLIC_KEY = "RWSwsBNAhlE3D4MVOq+eY+Hyy7EhCPmm2Bz296ATJY/0ujcqyJ6X0BlH
 def _verify_minisign(file_path: Path, sig_path: Path) -> bool:
     """Verify a minisign Ed25519 signature against the embedded public key.
 
-    Minisign .minisig layout (line 1 after base64-decode):
-      bytes[0:2]  — algorithm tag ("Ed")
-      bytes[2:10] — 8-byte key ID (must match public key)
-      bytes[10:74] — 64-byte Ed25519 signature over file content
+    Signature line layout: 2-byte algorithm tag, 8-byte key ID, 64-byte
+    signature. Tag "ED" (minisign's default) signs BLAKE2b-512 of the file;
+    legacy "Ed" signs the raw file. The trusted comment is also verified.
     """
     try:
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-        from cryptography.exceptions import InvalidSignature  # noqa: F401
 
         pub_raw = base64.b64decode(_MINISIGN_PUBLIC_KEY)
         pub_key_id = pub_raw[2:10]
@@ -43,11 +41,27 @@ def _verify_minisign(file_path: Path, sig_path: Path) -> bool:
 
         lines = Path(sig_path).read_text(encoding="utf-8").splitlines()
         sig_raw = base64.b64decode(lines[1])
-        if sig_raw[2:10] != pub_key_id:
+        if len(sig_raw) != 74 or sig_raw[2:10] != pub_key_id:
             return False
-        signature = sig_raw[10:74]
+        algo, signature = sig_raw[:2], sig_raw[10:74]
 
-        pub_key.verify(signature, Path(file_path).read_bytes())
+        if algo == b"ED":
+            h = hashlib.blake2b(digest_size=64)
+            with open(file_path, "rb") as f:
+                for chunk in iter(lambda: f.read(1 << 20), b""):
+                    h.update(chunk)
+            message = h.digest()
+        elif algo == b"Ed":
+            message = Path(file_path).read_bytes()
+        else:
+            return False
+        pub_key.verify(signature, message)
+
+        prefix = "trusted comment: "
+        if not lines[2].startswith(prefix):
+            return False
+        trusted = lines[2][len(prefix):].encode("utf-8")
+        pub_key.verify(base64.b64decode(lines[3]), signature + trusted)
         return True
     except Exception:
         return False

@@ -5,7 +5,7 @@
 # Prerequisites on this server:
 #   - gh (GitHub CLI) installed and authenticated: gh auth login
 #   - minisign installed (scoop install minisign)
-#   - minisign.key stored at $KeyPath below (no passphrase — see README)
+#   - minisign.key stored at $KeyPath below (no passphrase)
 #
 # Schedule: run every 5 minutes via Task Scheduler (see setup instructions).
 
@@ -56,7 +56,7 @@ if ($assets -match [regex]::Escape($sigfile)) {
     exit 0
 }
 
-Log "No signature found — downloading installer..."
+Log "No signature found - downloading installer..."
 
 $installerPath = Join-Path $WorkDir $installer
 $sigPath       = Join-Path $WorkDir $sigfile
@@ -73,13 +73,14 @@ if ($LASTEXITCODE -ne 0) {
 Log "Downloaded $installer"
 
 # Sign it
-minisign -S -m $installerPath -s $KeyPath -x $sigPath
+# -l (legacy "Ed" format): the only format the 2.0.5 client can verify
+minisign -S -l -m $installerPath -s $KeyPath -x $sigPath
 if ($LASTEXITCODE -ne 0) {
     Log "ERROR: minisign failed. Check that the key path is correct and has no passphrase."
     Remove-Item -Force -ErrorAction SilentlyContinue $installerPath
     exit 1
 }
-Log "Signed — uploading $sigfile..."
+Log "Signed - uploading $sigfile..."
 
 # Upload the signature to the release
 gh release upload $tag $sigPath --repo $Repo --clobber
