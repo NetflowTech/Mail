@@ -11,6 +11,64 @@ from pathlib import Path
 from .models import EmailMessage
 
 
+# --- Denial-of-service guards --------------------------------------------------
+# The MIME parser runs on every message during sync, straight off the wire and
+# before anything is displayed, so a crafted email can hang it, exhaust memory,
+# or crash the sync worker with zero interaction from the user. These bounds are
+# far above any legitimate email but far below the crafted payloads, and any
+# message that trips one is replaced with a safe placeholder instead of parsed.
+MAX_MESSAGE_BYTES = 50 * 1024 * 1024          # whole message (Gmail's own ceiling)
+MAX_HEADER_BYTES = 256 * 1024                 # size of the header section
+MAX_HEADER_PARAMS = 512                       # ';' in headers -> quadratic param parse
+MAX_ENCODED_WORDS = 2048                      # '=?' encoded-words -> memory blow-up
+MAX_TYPE_MARKERS = 1024                       # multipart/message nesting & part count
+MAX_PARTS = 1024                              # attachment parts we will enumerate
+MAX_TOTAL_ATTACHMENT_BYTES = 100 * 1024 * 1024  # cumulative decoded attachment bytes
+
+
+def _structural_reject(raw: bytes) -> str | None:
+    """Reason to refuse `raw` without parsing it, or None if it looks sane.
+
+    Cheap O(n) byte scans that bound the three fuzzed failure modes before the
+    expensive stdlib parser ever runs: oversized input, a header with tens of
+    thousands of parameters (quadratic hang), tens of thousands of encoded-words
+    (memory amplification), and deeply nested / part-flooded structures.
+    """
+    if len(raw) > MAX_MESSAGE_BYTES:
+        return "oversized"
+    sep = raw.find(b"\r\n\r\n")
+    if sep == -1:
+        sep = raw.find(b"\n\n")
+    header = raw if sep == -1 else raw[:sep]
+    if len(header) > MAX_HEADER_BYTES:
+        return "oversized headers"
+    if header.count(b";") > MAX_HEADER_PARAMS:
+        return "too many header parameters"
+    if header.count(b"=?") > MAX_ENCODED_WORDS:
+        return "too many encoded-words"
+    lowered = raw.lower()
+    if (lowered.count(b"multipart/") + lowered.count(b"message/rfc822")
+            > MAX_TYPE_MARKERS):
+        return "too deeply nested"
+    return None
+
+
+def _placeholder(account_id: int, folder: str, uid: int,
+                 reason: str) -> EmailMessage:
+    """A safe stand-in for a message we refused to parse.
+
+    It carries the real folder/uid so the sync watermark still advances and the
+    hostile message is never re-fetched and re-processed on reconnect.
+    """
+    return EmailMessage(
+        account_id=account_id, folder=folder, uid=uid,
+        subject="(unreadable message)", sender="", recipients="", cc="",
+        date=datetime.now(timezone.utc).isoformat(),
+        body_text=f"This message could not be displayed safely ({reason}) "
+                  "and was skipped.",
+        body_html="", attachments="", message_id="")
+
+
 def _sanitize_filename(name: str, fallback: str) -> str:
     """Keep only a safe basename: strip path separators and NULs."""
     name = (name or "").replace("\x00", "")
@@ -86,11 +144,31 @@ def _nested_email_name(part) -> str:
 
 def parse_message(raw: bytes, account_id: int, folder: str, uid: int,
                   attachment_dir: Path | None = None) -> EmailMessage:
-    """Parse raw RFC822 bytes into an EmailMessage. Never raises on bad input."""
+    """Parse raw RFC822 bytes into an EmailMessage. Never raises on bad input.
+
+    Hostile input (oversized, parameter/encoded-word floods, deep nesting) is
+    refused up front or caught, and replaced with a safe placeholder, so a
+    single crafted email can never hang the parser, exhaust memory, or crash
+    the caller. See the DoS guards above.
+    """
     if isinstance(raw, str):
         raw = raw.encode("utf-8", errors="replace")
-    msg = email.message_from_bytes(raw, policy=email.policy.default)
 
+    reason = _structural_reject(raw)
+    if reason is not None:
+        return _placeholder(account_id, folder, uid, reason)
+
+    try:
+        msg = email.message_from_bytes(raw, policy=email.policy.default)
+        return _build_message(msg, account_id, folder, uid, attachment_dir)
+    except Exception:
+        # RecursionError on deep nesting, or anything else the stdlib throws on
+        # malformed MIME: never let it propagate out of here.
+        return _placeholder(account_id, folder, uid, "unreadable")
+
+
+def _build_message(msg, account_id: int, folder: str, uid: int,
+                   attachment_dir: Path | None) -> EmailMessage:
     subject = (msg.get("Subject") or "").strip() or "(no subject)"
     sender = str(msg.get("From", ""))
     recipients = str(msg.get("To", ""))
@@ -135,6 +213,8 @@ def parse_message(raw: bytes, account_id: int, folder: str, uid: int,
         # parts and pick up image/* parts carrying a Content-ID.
         try:
             for part in msg.walk():
+                if len(parts) >= MAX_PARTS:
+                    break
                 if (id(part) not in seen
                         and part.get_content_maintype() == "image"
                         and part.get("Content-ID")):
@@ -143,6 +223,10 @@ def parse_message(raw: bytes, account_id: int, folder: str, uid: int,
                     forced_inline.add(id(part))
         except Exception:
             pass
+        # Cap how many parts we enumerate: a message with tens of thousands of
+        # parts would otherwise churn CPU and fill the disk one write at a time.
+        parts = parts[:MAX_PARTS]
+        total_bytes = 0
         for i, part in enumerate(parts):
             try:
                 filename = part.get_filename() or f"attachment-{i}"
@@ -169,6 +253,10 @@ def parse_message(raw: bytes, account_id: int, folder: str, uid: int,
                           or (bool(cid) and cid in (body_html or ""))
                           or (disp == "inline" and cid
                               and cid in (body_html or "")))
+                total_bytes += len(content)
+                if total_bytes > MAX_TOTAL_ATTACHMENT_BYTES:
+                    # Stop before decoding gigabytes out of a crafted message.
+                    break
                 safe = _sanitize_filename(filename, f"attachment-{i}")
                 dest_dir = attachment_dir / uuid.uuid4().hex
                 dest_dir.mkdir(parents=True, exist_ok=True)

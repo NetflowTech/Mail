@@ -186,8 +186,16 @@ class ImapWorker(QThread):
                     log.warning("worker %s: uid %s missing body, skipping (expunged?)",
                                 self.account.email, uid)
                     continue
-                msg = parse_message(raw, self.account.id, folder, uid,
-                                    attachment_dir=data_dir() / "attachments")
+                try:
+                    msg = parse_message(raw, self.account.id, folder, uid,
+                                        attachment_dir=data_dir() / "attachments")
+                except Exception:
+                    # parse_message is hardened to never raise, but one hostile
+                    # message must never kill the worker or wedge sync, so guard
+                    # the call site too. The watermark still advances below.
+                    log.exception("worker %s: parse failed, skipping uid %s",
+                                  self.account.email, uid)
+                    continue
                 # Honor the server's read state. Sent/Trash are always "read"
                 # (own mail / discarded) so they never inflate unread counts
                 # or fire notifications, even on servers that omit \Seen there.
@@ -246,8 +254,13 @@ class ImapWorker(QThread):
                 raw = _raw_body(data)
                 if raw is None:
                     continue
-                msg = parse_message(raw, self.account.id, folder, uid,
-                                    attachment_dir=data_dir() / "attachments")
+                try:
+                    msg = parse_message(raw, self.account.id, folder, uid,
+                                        attachment_dir=data_dir() / "attachments")
+                except Exception:
+                    log.exception("worker %s: parse failed, skipping uid %s",
+                                  self.account.email, uid)
+                    continue
                 if folder in ("SENT", "TRASH"):
                     msg.is_read = True
                 else:

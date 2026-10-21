@@ -256,3 +256,96 @@ class TestParseMessageAttachments:
         items = json.loads(msg.attachments or "[]")
         # The image is inline — its inline flag must be True
         assert all(i.get("inline") for i in items)
+
+
+# ---------------------------------------------------------------------------
+# Denial-of-service hardening (ref: MIME Parser DoS brief, D1-D3)
+#
+# The parser runs on every message during IMAP sync, off the wire, before the
+# message is shown. A crafted email must never hang it, exhaust memory, or
+# crash it: hostile input is replaced with a safe placeholder that still
+# carries the real uid so the sync watermark advances and it is not re-fetched.
+# ---------------------------------------------------------------------------
+
+import resource
+import time
+
+from emailclient.mailparse import (
+    MAX_MESSAGE_BYTES, _structural_reject, _placeholder,
+)
+
+PLACEHOLDER_SUBJECT = "(unreadable message)"
+
+
+def _is_placeholder(msg) -> bool:
+    return msg.subject == PLACEHOLDER_SUBJECT
+
+
+class TestParserDoS:
+    def test_d3_deeply_nested_multipart(self, tmp_path):
+        body = b""
+        for i in range(1000):
+            body = (b'Content-Type: multipart/mixed; boundary="b%d"\r\n\r\n'
+                    b"--b%d\r\n" % (i, i)) + body + (b"\r\n--b%d--\r\n" % i)
+        raw = b"MIME-Version: 1.0\r\n" + body
+        t0 = time.time()
+        msg = parse_message(raw, 1, "INBOX", 42, attachment_dir=tmp_path)
+        assert time.time() - t0 < 5.0      # does not hang
+        assert _is_placeholder(msg)
+        assert msg.uid == 42               # watermark still advances
+
+    def test_d3_deeply_nested_rfc822(self, tmp_path):
+        raw = b"Subject: inner\r\n\r\nhi\r\n"
+        for _ in range(1200):
+            raw = b"Content-Type: message/rfc822\r\n\r\n" + raw
+        raw = b"MIME-Version: 1.0\r\n" + raw
+        msg = parse_message(raw, 1, "INBOX", 7, attachment_dir=tmp_path)
+        assert _is_placeholder(msg)
+        assert msg.uid == 7
+
+    def test_d1_param_flood_does_not_hang(self, tmp_path):
+        params = b";".join(b'a%d="%d"' % (i, i) for i in range(80000))
+        raw = (b"MIME-Version: 1.0\r\nContent-Type: text/plain; " + params
+               + b"\r\n\r\nbody\r\n")
+        t0 = time.time()
+        msg = parse_message(raw, 1, "INBOX", 1, attachment_dir=tmp_path)
+        assert time.time() - t0 < 5.0
+        assert _is_placeholder(msg)
+
+    def test_d2_encoded_word_flood_bounds_memory(self, tmp_path):
+        before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        ew = b"=?utf-8?B?QUFBQQ==?="
+        raw = (b"Subject: " + b" ".join([ew] * 50000)
+               + b"\r\nMIME-Version: 1.0\r\n\r\nbody\r\n")
+        msg = parse_message(raw, 1, "INBOX", 1, attachment_dir=tmp_path)
+        after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        # ru_maxrss is bytes on macOS, KiB on Linux; either way the unfixed
+        # parser ballooned by gigabytes. Allow a generous 1 GB headroom.
+        assert (after - before) < 1024 * 1024 * 1024
+        assert _is_placeholder(msg)
+
+    def test_oversized_message_rejected_before_parse(self, tmp_path):
+        raw = b"Subject: big\r\n\r\n" + b"x" * (MAX_MESSAGE_BYTES + 1)
+        assert _structural_reject(raw) == "oversized"
+        msg = parse_message(raw, 1, "INBOX", 5, attachment_dir=tmp_path)
+        assert _is_placeholder(msg)
+        assert msg.uid == 5
+
+    def test_structural_reject_passes_normal_mail(self):
+        assert _structural_reject(_simple_mail()) is None
+        assert _structural_reject(_html_mail()) is None
+
+    def test_normal_mail_unaffected_by_guards(self, tmp_path):
+        # A benign multipart with an attachment must parse with full fidelity,
+        # never as a placeholder.
+        raw = _mail_with_attachment()
+        msg = parse_message(raw, 1, "INBOX", 1, attachment_dir=tmp_path)
+        assert not _is_placeholder(msg)
+        assert msg.subject == "Attach"
+
+    def test_placeholder_carries_identity(self):
+        ph = _placeholder(9, "Sent", 123, "oversized")
+        assert ph.account_id == 9
+        assert ph.folder == "Sent"
+        assert ph.uid == 123
+        assert ph.subject == PLACEHOLDER_SUBJECT
