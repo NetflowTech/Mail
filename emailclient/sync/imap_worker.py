@@ -28,6 +28,18 @@ IDLE_REFRESH_SECONDS = 25 * 60   # servers drop IDLE around 29 min
 # immediate; it is a plain socket wait, so polling costs nothing per account.
 IDLE_POLL_SECONDS = 10
 RECONNECT_DELAY_SECONDS = 15
+BLOCKED_BACKOFF_SECONDS = 30 * 60  # after the server says we are blocked
+
+# Phrases servers use when they refuse us outright (anti-spam IP blocks, rate
+# limits). Matched case-insensitively against the error text.
+_REFUSAL_MARKERS = ("blocked", "antispam", "anti-spam", "too many",
+                    "rate limit", "throttl")
+
+
+def _server_refused(exc: BaseException) -> bool:
+    """True if the server rejected us for abuse/rate reasons, not a glitch."""
+    text = str(exc).lower()
+    return any(m in text for m in _REFUSAL_MARKERS)
 INITIAL_FETCH_COUNT = 50
 FETCH_CHUNK_SIZE = 50    # uids per client.fetch call (protects memory on big mailboxes)
 BACKFILL_CHUNK_START = 100   # "auto" mode: first backfill batch size
@@ -464,14 +476,23 @@ class ImapWorker(QThread):
                 log.error("worker %s: login error: %s", self.account.email, exc)
                 self.status_changed.emit(self.account.id, "error")
                 return
-            except Exception:
+            except Exception as exc:
                 if self._stop:
                     return  # session interrupted by stop() — intentional, not a failure
-                log.exception("worker %s: session failed", self.account.email)
                 failures += 1
-                # Cap the backoff low (60s): this is a desktop client the user
-                # watches live, so a long wait looks "stuck on Reconnecting".
-                delay = min(RECONNECT_DELAY_SECONDS * 2 ** (failures - 1), 60)
+                if _server_refused(exc):
+                    # The server has blocked us (anti-spam / rate limit).
+                    # Retrying every minute only keeps the block in place, so
+                    # back off for a long time instead.
+                    log.warning("worker %s: server refused the connection, "
+                                "retrying in %d min: %s", self.account.email,
+                                BLOCKED_BACKOFF_SECONDS // 60, exc)
+                    delay = BLOCKED_BACKOFF_SECONDS
+                else:
+                    log.exception("worker %s: session failed", self.account.email)
+                    # Cap the backoff low (60s): this is a desktop client the user
+                    # watches live, so a long wait looks "stuck on Reconnecting".
+                    delay = min(RECONNECT_DELAY_SECONDS * 2 ** (failures - 1), 60)
                 delay += random.uniform(0, 5)
                 self.status_changed.emit(self.account.id, "reconnecting")
                 elapsed = 0.0

@@ -192,9 +192,13 @@ def apply_update(installer_path: Path) -> bool:
     try:
         if plat == "win":
             # Inno Setup: close the running app, install silently, relaunch it.
+            # /LOG keeps a record of the silent install, which otherwise fails
+            # without a trace if it is cancelled or can't replace the files.
+            log = installer_path.with_name("AMail-update-install.log")
             subprocess.Popen(
                 [str(installer_path), "/VERYSILENT", "/SUPPRESSMSGBOXES",
-                 "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS", "/NORESTART"],
+                 "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS", "/NORESTART",
+                 f"/LOG={log}"],
                 close_fds=True)
             return True
         if plat == "mac":

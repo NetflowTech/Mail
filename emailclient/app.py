@@ -246,9 +246,11 @@ def main():
         prog.show()
         app.processEvents()
 
+        # The signature is mandatory: without sig_url this always failed.
         ok = _updater.download_and_verify(
             url, sha256, dest,
-            progress=lambda p: (prog.setValue(int(p * 100)), app.processEvents()))
+            progress=lambda p: (prog.setValue(int(p * 100)), app.processEvents()),
+            sig_url=_updater.platform_sig_url(manifest))
         prog.close()
         if not ok:
             QMessageBox.warning(window, "AMail Update",

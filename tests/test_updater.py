@@ -169,3 +169,28 @@ class TestCurrentPlatform:
         from emailclient.updater import download_and_verify
         result = download_and_verify("http://example.com/x.zip", "sha", tmp_path)
         assert result is False
+
+
+class TestEveryUpdatePathIsSigned:
+    """Every caller of download_and_verify must pass sig_url. The startup
+    prompt once called it without one, so with signatures mandatory it failed
+    instantly on every machine while the About-dialog path worked."""
+
+    def test_all_callers_pass_sig_url(self):
+        import ast
+        from pathlib import Path
+        import emailclient
+        root = Path(emailclient.__file__).parent
+        callers = []
+        for path in root.rglob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                fn = node.func
+                name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", "")
+                if name == "download_and_verify":
+                    callers.append(path.name)
+                    kws = {k.arg for k in node.keywords}
+                    assert "sig_url" in kws, f"{path} calls download_and_verify without sig_url"
+        assert callers, "expected at least one caller"
