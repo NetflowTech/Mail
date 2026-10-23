@@ -5,7 +5,7 @@
 ; Fully offline — no download URLs, no update endpoints, no telemetry.
 
 #define AppName    "AMail"
-#define AppVersion "2.0.10"
+#define AppVersion "2.0.11"
 #define AppExe     "AMail.exe"
 #define SourceDir  "dist\AMail"
 
@@ -63,6 +63,12 @@ CreateUninstallRegKey=yes
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
+
+[InstallDelete]
+; Wipe the previous build's libraries first: the installer only adds and
+; overwrites files, so after a Qt upgrade the old version's leftovers would
+; otherwise sit next to the new ones. User data lives in ~/.amail, not here.
+Type: filesandordirs; Name: "{app}\_internal"
 
 [Files]
 ; All PyInstaller output — recursive, preserves subdirectory structure
