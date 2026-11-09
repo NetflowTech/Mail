@@ -191,14 +191,18 @@ def apply_update(installer_path: Path) -> bool:
     plat = _current_platform()
     try:
         if plat == "win":
-            # Inno Setup: close the running app, install silently, relaunch it.
-            # /LOG keeps a record of the silent install, which otherwise fails
-            # without a trace if it is cancelled or can't replace the files.
+            # Inno Setup: close the running app, install, relaunch it.
+            # /SILENT (not /VERYSILENT) keeps the progress window on screen:
+            # with nothing visible, people re-opened AMail while _internal was
+            # still being refilled and hit "shiboken6 does not exist". Error
+            # boxes are left enabled too — /SUPPRESSMSGBOXES auto-answered
+            # every file-in-use error with Abort, leaving a half-copied install
+            # and no clue why. The installer relaunches AMail itself when done
+            # (installer.iss [Run], silent only). /LOG keeps a record either way.
             log = installer_path.with_name("AMail-update-install.log")
             subprocess.Popen(
-                [str(installer_path), "/VERYSILENT", "/SUPPRESSMSGBOXES",
-                 "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS", "/NORESTART",
-                 f"/LOG={log}"],
+                [str(installer_path), "/SILENT",
+                 "/CLOSEAPPLICATIONS", "/NORESTART", f"/LOG={log}"],
                 close_fds=True)
             return True
         if plat == "mac":

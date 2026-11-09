@@ -260,6 +260,14 @@ def main():
             QMessageBox.warning(window, "AMail Update",
                                 "Download failed or file was corrupt.\nTry again later.")
             return
+        # Say what happens next: the installer runs in a small progress window
+        # after AMail closes, and the app comes back on its own. Without this,
+        # people re-opened AMail mid-install and got a half-copied app.
+        QMessageBox.information(
+            window, "AMail Update",
+            f"AMail will now close and install version {new_ver}.\n\n"
+            "A small progress window will appear while it installs — please "
+            "don't open AMail until it reopens by itself (about a minute).")
         if _updater.apply_update(dest):
             window.shutdown()
             app.quit()

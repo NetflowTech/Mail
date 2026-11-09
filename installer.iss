@@ -88,6 +88,12 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; IconFilename: "{a
 Filename: "{app}\{#AppExe}"; \
   Description: "Launch {#AppName}"; \
   Flags: nowait postinstall skipifsilent
+; Auto-update (silent run from the app): AMail has already quit by the time
+; Setup starts, so Restart Manager has nothing to restart. Relaunch it here,
+; as the logged-in user (Setup itself is elevated), once every file is in place.
+Filename: "{app}\{#AppExe}"; \
+  Flags: nowait runasoriginaluser; \
+  Check: WizardSilent
 
 
 [UninstallRun]

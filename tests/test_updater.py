@@ -194,3 +194,24 @@ class TestEveryUpdatePathIsSigned:
                     kws = {k.arg for k in node.keywords}
                     assert "sig_url" in kws, f"{path} calls download_and_verify without sig_url"
         assert callers, "expected at least one caller"
+
+
+class TestApplyUpdateWindowsFlags:
+    def test_installer_runs_visibly_and_without_suppressed_errors(self, tmp_path, monkeypatch):
+        """Regression: /VERYSILENT + /SUPPRESSMSGBOXES hid the install and
+        auto-aborted on file-in-use errors, leaving half-copied installs."""
+        from emailclient import updater
+        calls = []
+        monkeypatch.setattr(updater.subprocess, "Popen",
+                            lambda args, **kw: calls.append(args))
+        monkeypatch.setattr(updater, "_current_platform", lambda: "win")
+        installer = tmp_path / "AMail-Setup-9.9.9.exe"
+        installer.write_bytes(b"x")
+        assert updater.apply_update(installer) is True
+        (args,) = calls
+        assert args[0] == str(installer)
+        assert "/SILENT" in args
+        assert "/VERYSILENT" not in args
+        assert "/SUPPRESSMSGBOXES" not in args
+        assert "/CLOSEAPPLICATIONS" in args
+        assert any(a.startswith("/LOG=") for a in args)
