@@ -122,6 +122,10 @@ class Database:
         self._ensure_column("accounts", "signature_html", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("accounts", "attachments_only", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("accounts", "notify_enabled", "INTEGER NOT NULL DEFAULT 1")
+        # When the account was added on this PC (UTC ISO-8601). Accounts that
+        # pre-date the column keep '' — there is no reliable source to backfill
+        # from, and a made-up date would be worse than "unknown" in the export.
+        self._ensure_column("accounts", "added_at", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("outbox", "body_html", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("outbox", "approval_id", "TEXT NOT NULL DEFAULT ''")
         # 1 = admin approved in "send from sender" mode: skip the approval gate
@@ -307,11 +311,14 @@ class Database:
     # -- accounts --
     def add_account(self, a: Account) -> int:
         with self._lock:
+            added_at = (a.added_at or datetime.now(timezone.utc)
+                        .replace(microsecond=0).isoformat())
             cur = self.conn.execute(
                 "INSERT INTO accounts (name, email, provider, imap_host, imap_port,"
-                " smtp_host, smtp_port, color, sync_depth) VALUES (?,?,?,?,?,?,?,?,?)",
+                " smtp_host, smtp_port, color, sync_depth, added_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (a.name, a.email, a.provider, a.imap_host, a.imap_port,
-                 a.smtp_host, a.smtp_port, a.color, a.sync_depth or "50"))
+                 a.smtp_host, a.smtp_port, a.color, a.sync_depth or "50", added_at))
             self.conn.commit()
             return cur.lastrowid
 

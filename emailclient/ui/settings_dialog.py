@@ -13,7 +13,8 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog,
                                QMessageBox, QPlainTextEdit, QPushButton,
                                QScrollArea, QTabWidget, QVBoxLayout, QWidget)
 
-from .. import account_transfer, approval, backup, config, feedback, fleet
+from .. import (account_list, account_transfer, approval, backup, config,
+                feedback, fleet, xlsx)
 from ..license import LicenseManager
 from ..settings import (SOUNDS, AppearanceSettings, BackupSettings, NotifSettings,
                         ReaderSettings, SendSettings, play_sound)
@@ -120,13 +121,17 @@ class SettingsDialog(QDialog):
     _usage_refreshed = Signal()  # background fetch_usage() → refresh license label
     _usage_checked = Signal(bool)  # manual refresh done (True = server answered)
 
-    def __init__(self, parent=None, license_manager=None):
+    def __init__(self, parent=None, license_manager=None, db=None, engine=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.resize(660, 620)
         self._settings = NotifSettings()
         self._license = (license_manager if license_manager is not None
                          else LicenseManager())
+        # Account table + live sync state for "Export list" (License tab). The
+        # main window owns both; fall back to its attributes when opened from it.
+        self._db = db if db is not None else getattr(parent, "db", None)
+        self._engine = engine if engine is not None else getattr(parent, "engine", None)
         self._backup_settings = BackupSettings()
         self._send_settings = SendSettings()
         self._reader_settings = ReaderSettings()
@@ -980,6 +985,19 @@ class SettingsDialog(QDialog):
         about_btn.clicked.connect(self._show_about)
         lay.addWidget(about_btn)
 
+        # Export this PC's account list. Purely local (reads the accounts table),
+        # so it works offline, in every edition, and needs no server permission —
+        # unlike the license-wide "unique accounts" export below.
+        lay.addWidget(self._heading("📋 Export list"))
+        lay.addWidget(self._guide(
+            "Save the accounts on this computer as an Excel sheet: computer "
+            "name, email address, mail provider, date added and status."))
+        export_list_btn = QPushButton("📊 Export list (Excel)…")
+        export_list_btn.setToolTip(
+            "Write an .xlsx with one row per account set up on this PC")
+        export_list_btn.clicked.connect(self._export_account_list)
+        lay.addWidget(export_list_btn)
+
         # Export unique accounts — only for emails the admin granted the export
         # permission (from the web panel). The flag is cached from the last fleet
         # heartbeat; the server re-checks it when the export actually runs.
@@ -995,6 +1013,43 @@ class SettingsDialog(QDialog):
 
         lay.addStretch()
         return page
+
+    def _export_account_list(self):
+        """Save this PC's accounts (computer name, email, provider, date added,
+        status) as an .xlsx. Local data only — no network."""
+        from datetime import datetime
+        if self._db is None:
+            QMessageBox.warning(
+                self, "Export list",
+                "The account list isn't available from this window. Open "
+                "Settings from the main AMail window and try again.")
+            return
+        accounts = self._db.list_accounts()
+        if not accounts:
+            QMessageBox.information(
+                self, "Export list", "No accounts are set up on this computer yet.")
+            return
+        pc = account_list.computer_name()
+        stamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save account list",
+            f"amail-accounts-{pc}-{stamp}.xlsx", "Excel workbook (*.xlsx)")
+        if not path:
+            return
+        if not path.lower().endswith(".xlsx"):
+            path += ".xlsx"
+        rows = account_list.build_rows(accounts, self._engine, pc)
+        try:
+            with _busy():
+                xlsx.write_xlsx(path, account_list.HEADERS, rows,
+                                sheet_name="Accounts",
+                                col_widths=account_list.COL_WIDTHS)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Export failed", str(exc))
+            return
+        QMessageBox.information(
+            self, "Account list exported",
+            f"{len(rows)} account(s) saved to:\n{path}")
 
     def _export_unique_accounts(self):
         """Fetch the license-wide unique-account list (with PCs) and save it as a

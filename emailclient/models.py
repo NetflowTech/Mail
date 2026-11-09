@@ -23,6 +23,7 @@ class Account:
     signature_html: str = ""  # rich (HTML) signature; empty = use plain `signature`
     attachments_only: bool = False  # True = only save new INBOX emails that have attachments
     notify_enabled: bool = True     # False = no toast/native/sound for this account
+    added_at: str = ""    # UTC ISO-8601 when the account was added on this PC; '' = before the column existed
 
 
 @dataclass
