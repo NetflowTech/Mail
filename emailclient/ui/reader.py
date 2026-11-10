@@ -310,10 +310,51 @@ def _attachment_chips_html(attachments_json: str) -> str:
     return "<div>" + "".join(chips) + "</div>" if chips else ""
 
 
+class _NewWindowSink(QWebEnginePage):
+    """Stand-in for the window a target="_blank" link asks for.
+
+    Chromium does not route such links through acceptNavigationRequest; it
+    calls createWindow() and, with nothing returned, drops the click on the
+    floor — the user pressed a link and nothing happened. Most newsletters,
+    and every link Gmail or Outlook composes, open in a new tab, so this was
+    nearly every link. The page never loads anything: it forwards the URL to
+    the Reader (which opens the system browser) and discards itself."""
+
+    def __init__(self, owner: "_MailPage"):
+        super().__init__(owner.profile(), owner)
+        self._owner = owner
+        self._sent = False
+        # Belt and braces: this page never navigates (acceptNavigationRequest
+        # says no), but give it the Reader's own lockdown anyway — a fresh
+        # page would otherwise start with Chromium's defaults, JavaScript on.
+        s = self.settings()
+        s.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, False)
+        s.setAttribute(
+            QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, False)
+        s.setAttribute(
+            QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, False)
+        s.setAttribute(QWebEngineSettings.WebAttribute.PluginsEnabled, False)
+        self.urlChanged.connect(self._forward)
+
+    def _forward(self, url: QUrl) -> None:
+        if self._sent or url.isEmpty():
+            return
+        self._sent = True
+        self._owner.link_activated.emit(url)
+        self.deleteLater()
+
+    def acceptNavigationRequest(self, url: QUrl, nav_type, is_main_frame):
+        self._forward(url)
+        return False
+
+
 class _MailPage(QWebEnginePage):
     link_activated = Signal(QUrl)   # any link the user clicked
     image_activated = Signal(int)   # a body image the user clicked (zoom index)
     allowed_url: QUrl | None = None  # the page the Reader itself rendered
+
+    def createWindow(self, _window_type):
+        return _NewWindowSink(self)
 
     def acceptNavigationRequest(self, url: QUrl, nav_type, is_main_frame):
         NT = QWebEnginePage.NavigationType

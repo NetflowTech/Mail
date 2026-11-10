@@ -4,7 +4,8 @@ from __future__ import annotations
 import html
 import re
 
-_URL_RE = re.compile(r"https?://\S+")
+# "www.example.com" with no scheme is a link people click on too.
+_URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
 
 
 def linkify(escaped: str) -> str:
@@ -16,7 +17,8 @@ def linkify(escaped: str) -> str:
         while url and url[-1] in ".,;:!?)\"'":
             trailing = url[-1] + trailing
             url = url[:-1]
-        return f'<a href="{url}">{url}</a>{trailing}'
+        href = url if url.lower().startswith("http") else f"http://{url}"
+        return f'<a href="{href}">{url}</a>{trailing}'
     return _URL_RE.sub(_repl, escaped)
 
 

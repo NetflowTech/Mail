@@ -149,6 +149,27 @@ def _paint(name: str, p: QPainter, color: str):
         path.lineTo(13.5, 9.5)
         path.lineTo(15.5, 11.5)
         p.drawPath(path)
+    elif name == "table":
+        p.setPen(_pen(color, 1.4))
+        p.drawRoundedRect(QRectF(2.5, 3.5, 13, 11), 1.5, 1.5)
+        p.drawLine(QPointF(2.5, 7.5), QPointF(15.5, 7.5))
+        p.drawLine(QPointF(2.5, 11.0), QPointF(15.5, 11.0))
+        p.drawLine(QPointF(7.0, 3.5), QPointF(7.0, 14.5))
+        p.drawLine(QPointF(11.5, 3.5), QPointF(11.5, 14.5))
+    elif name == "brush":
+        # Format painter: a paintbrush — handle top-right, bristles bottom-left.
+        p.setPen(_pen(color, 1.5))
+        p.drawLine(QPointF(15.0, 3.0), QPointF(8.5, 9.5))
+        p.setPen(_pen(color, 1.2))
+        p.setBrush(QColor(color))
+        path = QPainterPath(QPointF(8.5, 9.5))
+        path.lineTo(5.0, 10.5)
+        path.lineTo(3.0, 15.5)
+        path.lineTo(8.0, 13.5)
+        path.lineTo(9.5, 10.5)
+        path.closeSubpath()
+        p.drawPath(path)
+        p.setBrush(Qt.BrushStyle.NoBrush)
     elif name == "clear":
         _draw_letter(p, color, "Tx", _letter_font(10))
         p.setPen(_pen(color, 1.2))

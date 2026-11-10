@@ -37,8 +37,9 @@ from ..models import EmailMessage
 from ..settings import ComposeSettings
 
 log = logging.getLogger(__name__)
+from ..outgoing_html import email_ready_html
 from ..smtp_sender import parse_rcpts
-from . import editor_icons, theme
+from . import editor_icons, format_painter, table_tools, theme
 from .attachment_chips import AttachmentArea
 from .recipient_edit import RecipientDropButton, RecipientEdit
 
@@ -191,7 +192,8 @@ def insert_paragraph_html(cursor, fragment: str) -> None:
     cursor.insertHtml(fragment)
 
 
-def normalise_block_spacing(document) -> None:
+def normalise_block_spacing(document, start: int | None = None,
+                            end: int | None = None) -> None:
     """Strip inherited paragraph margins from a document loaded as HTML.
 
     Qt gives a bare "<p>" its CSS default margins — 12px above and below — and
@@ -199,6 +201,9 @@ def normalise_block_spacing(document) -> None:
     or queued message saved by an older build reopens double-spaced, and keeps
     spreading as the user types, even though composing a fresh one no longer
     does. Reset the margins once, on load.
+
+    With *start*/*end* (document positions) only the blocks in that range are
+    touched — used for a pasted fragment, so the rest of the mail is left alone.
     """
     from PySide6.QtGui import QTextCursor as _Cursor
 
@@ -206,6 +211,11 @@ def normalise_block_spacing(document) -> None:
     cursor.beginEditBlock()
     block = document.begin()
     while block.isValid():
+        pos = block.position()
+        if ((start is not None and pos + block.length() <= start)
+                or (end is not None and pos > end)):
+            block = block.next()
+            continue
         fmt = block.blockFormat()
         if fmt.topMargin() or fmt.bottomMargin():
             fmt.setTopMargin(0)
@@ -593,11 +603,64 @@ class _RichBody(QTextEdit):
     imageSelected = Signal(object)   # dict(name, width, layout, side_text) | None
     emailsPasted = Signal(list)      # [.eml path, ...] -> attach, don't inline
     filesDropped = Signal(list)      # [path, ...] -> attach, don't inline
+    selectionFinished = Signal()     # the user just finished selecting text
+    painterCancelled = Signal()      # Esc while the format painter is armed
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.setMouseTracking(True)   # fire mouseMove without a button held
         self._sel_img_pos = None      # doc pos of the selected image
+        self._painter_cursor = None   # QCursor while the format painter is armed
+
+    # ----- format painter --------------------------------------------------
+
+    def set_painter_cursor(self, cursor) -> None:
+        """A brush cursor while the painter is armed; None restores the caret."""
+        self._painter_cursor = cursor
+        self.viewport().setCursor(cursor if cursor is not None
+                                  else Qt.CursorShape.IBeamCursor)
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        if (event.button() == Qt.MouseButton.LeftButton
+                and self.textCursor().hasSelection()):
+            self.selectionFinished.emit()
+
+    def keyReleaseEvent(self, event):
+        super().keyReleaseEvent(event)
+        # Shift+arrows / Shift+End … end when Shift comes up.
+        if event.key() == Qt.Key.Key_Shift and self.textCursor().hasSelection():
+            self.selectionFinished.emit()
+
+    def keyPressEvent(self, event):
+        if (event.key() == Qt.Key.Key_Escape
+                and self._painter_cursor is not None):
+            # Swallow it: otherwise the dialog takes Esc as "close".
+            self.painterCancelled.emit()
+            event.accept()
+            return
+        if table_tools.handle_tab(self, event):
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    # ----- tables ----------------------------------------------------------
+
+    def insert_pasted_html(self, html: str) -> None:
+        """insertHtml plus the clean-up a Word / Excel / web table needs."""
+        # No outer edit block here: while one is open, QTextTableCell.setFormat
+        # on the freshly inserted table is silently lost (the cell formats in
+        # fix_pasted_tables never landed).
+        cursor = self.textCursor()
+        start = cursor.selectionStart()
+        cursor.insertHtml(html)
+        end = cursor.position()
+        doc = self.document()
+        # Word's paragraphs carry 12px margins into the cells; strip them so
+        # the rows are as tight as they were in the source.
+        normalise_block_spacing(doc, start, end)
+        table_tools.fix_pasted_tables(doc, start, end)
+        self.setTextCursor(cursor)
 
     @staticmethod
     def _is_image_url(url: QUrl) -> bool:
@@ -631,6 +694,12 @@ class _RichBody(QTextEdit):
         if paths:
             self.emailsPasted.emit(paths)
             return
+        # A table copied from Excel / Word / a web page: those put a picture
+        # of the cells on the clipboard too, and the image branch below used
+        # to win — the user got a screenshot instead of an editable table.
+        if source.hasHtml() and table_tools.has_table(source.html()):
+            self.insert_pasted_html(source.html())
+            return
         if source.hasImage():
             image = QImage(source.imageData())
             if not image.isNull():
@@ -661,10 +730,12 @@ class _RichBody(QTextEdit):
     def contextMenuEvent(self, event):
         highlighter = getattr(self, "_spell_highlighter", None)
         if highlighter is None:
-            super().contextMenuEvent(event)
-            return
-        from .spellcheck import build_menu
-        menu = build_menu(self, highlighter, event.pos())
+            menu = self.createStandardContextMenu(event.pos())
+        else:
+            from .spellcheck import build_menu
+            menu = build_menu(self, highlighter, event.pos())
+        # Right-click inside a table: row / column / merge actions, like Word.
+        table_tools.add_table_actions(menu, self)
         menu.exec(event.globalPos())
 
     def insert_qimage(self, image: QImage, cursor: QTextCursor | None = None,
@@ -984,11 +1055,28 @@ class _RichBody(QTextEdit):
 
     def mouseMoveEvent(self, event):
         super().mouseMoveEvent(event)
+        if self._painter_cursor is not None:
+            self.viewport().setCursor(self._painter_cursor)
+            return
         over_image = self._img_pos_under(event.position().toPoint()) is not None
         # Hand only over an actual image; restore the text caret everywhere else
         # so it never sticks as a hand over plain text.
         self.viewport().setCursor(Qt.CursorShape.PointingHandCursor if over_image
                                   else Qt.CursorShape.IBeamCursor)
+
+
+class _PainterButton(QPushButton):
+    """Checkable toolbar button that also reports a double-click, which keeps
+    the format painter armed for several targets (as in Word / Outlook)."""
+
+    doubleClicked = Signal()
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.doubleClicked.emit()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
 
 class ComposeDialog(QDialog):
@@ -1104,6 +1192,12 @@ class ComposeDialog(QDialog):
         self.body_edit.cursorPositionChanged.connect(self._sync_toolbar)
         self.body_edit.currentCharFormatChanged.connect(
             lambda _fmt: self._sync_toolbar())
+        # Format painter state: the captured look, and whether it stays
+        # loaded after one use (double-click on the button).
+        self._painter_fmt = None
+        self._painter_sticky = False
+        self.body_edit.selectionFinished.connect(self._apply_format_painter)
+        self.body_edit.painterCancelled.connect(self._disarm_format_painter)
 
         # Attach lives in the top action bar (Outlook-style); the chips sit
         # directly under Subject, above the body, where attachments belong.
@@ -1426,6 +1520,32 @@ class ComposeDialog(QDialog):
         lay.addWidget(self._tool_btn("link", self._insert_link, tip="Link"))
         lay.addWidget(self._tool_btn("image", self._insert_image_dialog,
                                      tip="Insert image"))
+
+        # Table: a Word-style grid picker drops down from the button.
+        self.table_btn = QPushButton()
+        self.table_btn.setIcon(editor_icons.icon("table"))
+        self.table_btn.setFixedSize(34, 26)
+        self.table_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.table_btn.setToolTip("Insert table")
+        self._table_menu = table_tools.TableMenu(self.table_btn)
+        self._table_menu.picked.connect(self._insert_table)
+        self.table_btn.setMenu(self._table_menu)
+        lay.addWidget(self.table_btn)
+
+        # Format painter: click once to copy the look at the caret and brush
+        # it onto the next selection; double-click keeps the brush loaded.
+        self.painter_btn = _PainterButton()
+        self.painter_btn.setIcon(editor_icons.icon("brush"))
+        self.painter_btn.setFixedSize(28, 26)
+        self.painter_btn.setCheckable(True)
+        self.painter_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.painter_btn.setToolTip(
+            "Format painter — copy this text's formatting, then select the "
+            "text to apply it to (double-click to apply it several times)")
+        self.painter_btn.clicked.connect(self._toggle_format_painter)
+        self.painter_btn.doubleClicked.connect(self._painter_sticky)
+        lay.addWidget(self.painter_btn)
+
         lay.addWidget(self._tool_btn("clear", self._clear_formatting,
                                      tip="Clear formatting"))
 
@@ -1558,6 +1678,45 @@ class ComposeDialog(QDialog):
         self.body_edit.setCurrentCharFormat(QTextCharFormat())
         self.body_edit.setFocus()
 
+    # ----- tables ----------------------------------------------------------
+
+    def _insert_table(self, rows: int, cols: int):
+        table_tools.insert_table(self.body_edit, rows, cols)
+
+    # ----- format painter --------------------------------------------------
+
+    def _toggle_format_painter(self, on: bool):
+        if on:
+            self._arm_format_painter(sticky=False)
+        else:
+            self._disarm_format_painter()
+
+    def _painter_sticky(self):
+        self._arm_format_painter(sticky=True)
+
+    def _arm_format_painter(self, sticky: bool):
+        self._painter_fmt = format_painter.capture(self.body_edit)
+        self._painter_sticky = sticky
+        self.painter_btn.setChecked(True)
+        self.body_edit.set_painter_cursor(format_painter.brush_cursor())
+        self._flash_status("Select the text to apply the formatting to"
+                           + (" — Esc to stop" if sticky else ""))
+
+    def _disarm_format_painter(self):
+        self._painter_fmt = None
+        self._painter_sticky = False
+        self.painter_btn.setChecked(False)
+        self.body_edit.set_painter_cursor(None)
+
+    def _apply_format_painter(self):
+        if self._painter_fmt is None:
+            return
+        char_fmt, block_fmt = self._painter_fmt
+        if format_painter.apply(self.body_edit, char_fmt, block_fmt):
+            if not self._painter_sticky:
+                self._disarm_format_painter()
+            self._sync_toolbar()
+
     def _insert_image_dialog(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Insert image", "",
@@ -1581,6 +1740,12 @@ class ComposeDialog(QDialog):
         idx = self.font_box.findText(family, Qt.MatchFlag.MatchFixedString)
         self.font_box.setCurrentIndex(idx if idx >= 0 else 0)
         self.font_box.blockSignals(False)
+        # Same for the size box, so the painter's result (and any pasted
+        # text) reads back correctly instead of showing the default 13.
+        size = fmt.fontPointSize() or self.body_edit.font().pointSizeF()
+        self.size_box.blockSignals(True)
+        self.size_box.setCurrentText(f"{size:g}")
+        self.size_box.blockSignals(False)
         self.bold_btn.setChecked(fmt.fontWeight() >= QFont.Weight.Bold)
         self.italic_btn.setChecked(fmt.fontItalic())
         self.underline_btn.setChecked(fmt.fontUnderline())
@@ -2274,6 +2439,9 @@ class ComposeDialog(QDialog):
             if ans != QMessageBox.StandardButton.Yes:
                 return
         html, inline = self._export_inline_images(self.body_edit.toHtml())
+        # Qt's HTML is for Qt; fix what real mail clients get wrong with it
+        # (blank lines vanished in Outlook, pasted tables lost their borders).
+        html = email_ready_html(html)
         body_text = self.body_edit.toPlainText()
         # Append the quoted original in full (template + inline images intact) so
         # the recipient's client renders it faithfully.
