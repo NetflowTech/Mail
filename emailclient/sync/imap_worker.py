@@ -57,6 +57,32 @@ FALLBACKS = {
 DEFAULT_FALLBACK = {"SENT": "Sent", "TRASH": "Trash", "SPAM": "Spam"}
 
 
+def _seen(data: dict) -> bool:
+    flags = data.get(b"FLAGS") or ()
+    return b"\\Seen" in flags or "\\Seen" in flags
+
+
+def initial_read_state(folder: str, data: dict, history: bool) -> bool:
+    """Whether a freshly downloaded message starts out read on this PC.
+
+    Read state is per computer: AMail never writes \\Seen to the server and,
+    for new arrivals, ignores it — on a mailbox several people share that
+    flag means "someone, somewhere, opened it" (webmail, a phone, a
+    colleague's PC), not "you did". A mail becomes read here only when it is
+    opened here.
+
+    Two exceptions. Sent/Trash are always read (own mail / discarded) so they
+    never inflate unread counts or fire notifications. *history* — mail pulled
+    in at setup, by backfill or by a full resync — follows the server flag so
+    a fresh install does not show years of old mail as unread.
+    """
+    if folder in ("SENT", "TRASH"):
+        return True
+    if history:
+        return _seen(data)
+    return False
+
+
 def _raw_body(data: dict) -> bytes | None:
     """Raw message bytes out of a FETCH response.
 
@@ -190,6 +216,9 @@ class ImapWorker(QThread):
         else:
             uids = [u for u in client.search(["UID", f"{last_seen + 1}:*"]) if u > last_seen]
         new = []
+        # Setup / full resync pulls history; anything after the watermark is
+        # a genuinely new arrival (see initial_read_state).
+        history = last_seen == 0
         for start in range(0, len(uids), FETCH_CHUNK_SIZE):
             chunk = uids[start:start + FETCH_CHUNK_SIZE]
             for uid, data in client.fetch(chunk, [b"BODY.PEEK[]", b"FLAGS"]).items():
@@ -208,14 +237,7 @@ class ImapWorker(QThread):
                     log.exception("worker %s: parse failed, skipping uid %s",
                                   self.account.email, uid)
                     continue
-                # Honor the server's read state. Sent/Trash are always "read"
-                # (own mail / discarded) so they never inflate unread counts
-                # or fire notifications, even on servers that omit \Seen there.
-                if folder in ("SENT", "TRASH"):
-                    msg.is_read = True
-                else:
-                    flags = data.get(b"FLAGS") or ()
-                    msg.is_read = b"\\Seen" in flags or "\\Seen" in flags
+                msg.is_read = initial_read_state(folder, data, history)
                 if (getattr(self.account, "attachments_only", False)
                         and folder == "INBOX" and not msg.attachments):
                     # User opted to keep only attachment-bearing INBOX mail;
@@ -273,11 +295,8 @@ class ImapWorker(QThread):
                     log.exception("worker %s: parse failed, skipping uid %s",
                                   self.account.email, uid)
                     continue
-                if folder in ("SENT", "TRASH"):
-                    msg.is_read = True
-                else:
-                    flags = data.get(b"FLAGS") or ()
-                    msg.is_read = b"\\Seen" in flags or "\\Seen" in flags
+                # Backfill is older history: follow the server flag.
+                msg.is_read = initial_read_state(folder, data, history=True)
                 if (getattr(self.account, "attachments_only", False)
                         and folder == "INBOX" and not msg.attachments):
                     continue
