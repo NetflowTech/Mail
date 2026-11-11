@@ -15,12 +15,19 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QPushButton,
                                QScrollArea, QVBoxLayout)
 
+from .. import safe_paths
 from . import theme
 
 
 def pixmap_from_src(src: str) -> QPixmap:
-    """Load a QPixmap from an <img src> — a data: URI, file path, or file:// URL.
-    Remote (http) images aren't fetched (the reader blocks them too)."""
+    """Load a QPixmap from an <img src>: a data: URI, or a file the app itself
+    wrote (an attachment or inline image under the data folder).
+
+    Anything else gives an empty pixmap without touching the filesystem. An
+    email can point an image at ``file://attacker/share/x.png`` or
+    ``\\\\attacker\\share\\x.png``; merely opening such a path makes Windows
+    connect to the host and send the user's login hash. Remote (http) images
+    are not fetched either (the reader blocks them too)."""
     pm = QPixmap()
     try:
         if src.startswith("data:"):
@@ -29,11 +36,10 @@ def pixmap_from_src(src: str) -> QPixmap:
                 pm.loadFromData(base64.b64decode(payload))
             else:
                 pm.loadFromData(urllib.parse.unquote_to_bytes(payload))
-        elif src.startswith("file://"):
-            from PySide6.QtCore import QUrl
-            pm = QPixmap(QUrl(src).toLocalFile())
-        elif not src.startswith(("http://", "https://")):
-            pm = QPixmap(src)
+        else:
+            real = safe_paths.safe_app_file(src)
+            if real:
+                pm = QPixmap(real)
     except Exception:
         pass
     return pm

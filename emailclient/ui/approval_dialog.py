@@ -19,11 +19,11 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QFrame,
                                QHBoxLayout, QInputDialog, QLabel, QMessageBox,
-                               QPushButton, QScrollArea, QTextBrowser,
-                               QVBoxLayout, QWidget)
+                               QPushButton, QScrollArea, QVBoxLayout, QWidget)
 
 from .. import approval, smtp_sender
 from . import theme
+from .safe_text_browser import SafeTextBrowser
 
 
 _ACTION_LABEL = {
@@ -51,7 +51,7 @@ class _HistoryDialog(QDialog):
         lay.addWidget(title)
         lay.addWidget(QLabel("Who approved, rejected or sent which email "
                              "(newest first, this license)."))
-        self._view = QTextBrowser()
+        self._view = SafeTextBrowser()
         self._view.setOpenExternalLinks(False)
         lay.addWidget(self._view, 1)
         row = QHBoxLayout(); row.addStretch(1)
@@ -549,9 +549,9 @@ class _ItemDetailDialog(QDialog):
         outgoing.setStyleSheet(f"color: {theme.GOLD_DEEP}; font-weight: 600;")
         lay.addWidget(outgoing)
 
-        body = QTextBrowser()
-        body.setOpenExternalLinks(False)
-        body.setOpenLinks(False)
+        # A safe viewer: the quoted original is untrusted HTML and a plain
+        # QTextBrowser would open any file:// image it names.
+        body = SafeTextBrowser()
         body.setStyleSheet(
             f"QTextBrowser {{ background: {theme.BG}; color: {theme.TEXT};"
             f" border: 1px solid {theme.BORDER}; border-radius: 8px; }}")

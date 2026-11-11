@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (QColorDialog, QComboBox, QDialog,
                                QSlider, QSplitter, QTextBrowser,
                                QTextEdit, QVBoxLayout, QWidget)
 
-from .. import config
+from .. import config, safe_paths
 from ..models import EmailMessage
 from ..settings import ComposeSettings
 
@@ -353,11 +353,19 @@ def export_file_images(html: str, inline_dir) -> tuple[str, list[dict]]:
     Unloadable/missing files are left untouched. String-only (no QTextDocument
     needed) so it stays unit-testable.
 
+    Only files the app wrote itself (signature images, exported inline images,
+    attachments of the quoted original) are opened. A hostile original can
+    quote ``file://attacker/share/x.png`` (opening it leaks the Windows login
+    hash) or ``file:///C:/Users/me/secret.png`` (which would be read and
+    mailed back out); those refs are left alone and never touched.
+
     Returns (rewritten_html, [{"cid": hex, "path": str}, ...]).
     """
     inline: list[dict] = []
     for ref in sorted(set(re.findall(r'src="(file://[^"]+)"', html))):
-        local = QUrl(ref).toLocalFile()
+        local = safe_paths.safe_app_file(ref)
+        if not local:
+            continue
         image = QImage(local)
         if image.isNull():
             continue

@@ -1668,36 +1668,17 @@ class MainWindow(QMainWindow):
         win.raise_()
         win.activateWindow()
 
-    # Folders the app itself writes mail files into. A locally saved Sent copy
-    # points at copied/ (an attached email) and inline/ (signature images), so
-    # allowing only attachments/ made those chips unopenable.
-    _ATTACHMENT_DIRS = ("attachments", "copied", "inline")
-
     def _safe_attachment_path(self, src_path: str) -> str | None:
         """Return the validated real path of *src_path* if it lives inside one
         of the app's own mail folders, else None.
 
         Emails are untrusted: a message could embed a file:// link to any local
-        path (e.g. file:///etc/passwd). Only ever touch files the app itself
-        wrote — never an arbitrary path an email handed us.
+        path (e.g. file:///etc/passwd) or a network share that leaks the
+        Windows login hash on first touch. Only ever open files the app itself
+        wrote — see emailclient.safe_paths.
         """
-        from ..config import data_dir
-        if not src_path:
-            return None
-        # Reject network paths before any filesystem call: even realpath/isfile
-        # on \\host\share makes Windows connect and send the user's NTLM hash.
-        if src_path.startswith(("\\\\", "//")):
-            return None
-        real = os.path.realpath(src_path)
-        if not os.path.isfile(real):
-            return None
-        for name in self._ATTACHMENT_DIRS:
-            root = os.path.realpath(data_dir() / name)
-            # The separator matters: "attachments_evil" must not pass as
-            # "attachments".
-            if real == root or real.startswith(root + os.sep):
-                return real
-        return None
+        from ..safe_paths import safe_app_file
+        return safe_app_file(src_path)
 
     def _copy_messages(self, ids: list):
         """Put the selected mail on the clipboard as real .eml file(s).

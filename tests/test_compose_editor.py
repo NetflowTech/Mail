@@ -264,3 +264,55 @@ class TestLinkify:
         from emailclient.ui.textrender import linkify
         assert ('<a href="https://x.io/a">https://x.io/a</a>'
                 in linkify("go https://x.io/a"))
+
+
+class TestExportFileImagesOnlyOpensAppFiles:
+    """On send, file:// images are converted to cid parts, but only when the
+    file is one the app wrote. A hostile quoted original must not get a
+    network path opened (login-hash leak) or a private local image attached
+    and mailed back."""
+
+    @pytest.fixture
+    def data_dir(self, tmp_path, monkeypatch):
+        from emailclient import safe_paths
+        d = tmp_path / "amail"
+        d.mkdir()
+        monkeypatch.setattr(safe_paths.config, "data_dir", lambda: d)
+        return d
+
+    @staticmethod
+    def _png(path):
+        from PySide6.QtGui import QImage
+        img = QImage(4, 4, QImage.Format.Format_ARGB32)
+        img.fill(0xFF0000FF)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        assert img.save(str(path), "PNG")
+        return path
+
+    def test_signature_image_is_exported(self, qapp, data_dir):
+        from PySide6.QtCore import QUrl
+        from emailclient.ui.compose import export_file_images
+        sig = self._png(data_dir / "sig_images" / "s.png")
+        url = QUrl.fromLocalFile(str(sig)).toString()
+        html, inline = export_file_images(f'<img src="{url}">', data_dir / "inline")
+        assert len(inline) == 1 and 'src="cid:' in html
+
+    def test_private_local_image_is_not_attached(self, qapp, data_dir, tmp_path):
+        from PySide6.QtCore import QUrl
+        from emailclient.ui.compose import export_file_images
+        private = self._png(tmp_path / "Pictures" / "private.png")
+        url = QUrl.fromLocalFile(str(private)).toString()
+        src = f'<p>quoted</p><img src="{url}">'
+        html, inline = export_file_images(src, data_dir / "inline")
+        assert inline == [] and html == src
+
+    def test_network_image_is_never_opened(self, qapp, data_dir, monkeypatch):
+        from emailclient import safe_paths
+        from emailclient.ui.compose import export_file_images
+
+        def boom(_p):
+            raise AssertionError("network path was opened")
+        monkeypatch.setattr(safe_paths.os.path, "realpath", boom)
+        src = '<img src="file://attacker-host/share/x.png">'
+        html, inline = export_file_images(src, data_dir / "inline")
+        assert inline == [] and html == src

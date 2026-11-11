@@ -27,17 +27,25 @@ from . import credentials, fleet, google_oauth, oauth
 from .config import APP_NAME
 from .models import Account
 
-# OSMACCT2 = stdlib crypto (no cryptography/Rust dependency). Older OSMACCT1
-# Fernet files are no longer readable.
-MAGIC = b"OSMACCT2"
-_PBKDF2_ITERS = 200_000
+# OSMACCT3 = stdlib crypto with the PBKDF2 round count stored in the file, so
+# the count can be raised again later without breaking older backups.
+# OSMACCT2 files (fixed 200,000 rounds) still import. Older OSMACCT1 Fernet
+# files are no longer readable.
+MAGIC = b"OSMACCT3"
+_LEGACY_MAGIC = b"OSMACCT2"
+_LEGACY_ITERS = 200_000
+# OWASP's current minimum for PBKDF2-HMAC-SHA256.
+_PBKDF2_ITERS = 600_000
+# A file naming an absurd count must not pin the CPU on import.
+_MAX_ITERS = 10_000_000
 FILE_SUFFIX = ".osmacct"
 
 
-def _derive(passphrase: str, salt: bytes) -> tuple[bytes, bytes]:
+def _derive(passphrase: str, salt: bytes,
+            iters: int = _PBKDF2_ITERS) -> tuple[bytes, bytes]:
     """Return (enc_key, mac_key), each 32 bytes, from the passphrase + salt."""
     material = hashlib.pbkdf2_hmac("sha256", passphrase.encode("utf-8"), salt,
-                                   _PBKDF2_ITERS, dklen=64)
+                                   iters, dklen=64)
     return material[:32], material[32:]
 
 
@@ -53,8 +61,9 @@ def _keystream(enc_key: bytes, nonce: bytes, n: int) -> bytes:
     return bytes(out[:n])
 
 
-def _encrypt(passphrase: str, salt: bytes, plaintext: bytes) -> bytes:
-    enc_key, mac_key = _derive(passphrase, salt)
+def _encrypt(passphrase: str, salt: bytes, plaintext: bytes,
+             iters: int = _PBKDF2_ITERS) -> bytes:
+    enc_key, mac_key = _derive(passphrase, salt, iters)
     nonce = os.urandom(16)
     ks = _keystream(enc_key, nonce, len(plaintext))
     ciphertext = bytes(p ^ k for p, k in zip(plaintext, ks))
@@ -62,14 +71,41 @@ def _encrypt(passphrase: str, salt: bytes, plaintext: bytes) -> bytes:
     return nonce + tag + ciphertext
 
 
-def _decrypt(passphrase: str, salt: bytes, body: bytes) -> bytes:
+def _decrypt(passphrase: str, salt: bytes, body: bytes,
+             iters: int = _PBKDF2_ITERS) -> bytes:
     nonce, tag, ciphertext = body[:16], body[16:48], body[48:]
-    enc_key, mac_key = _derive(passphrase, salt)
+    enc_key, mac_key = _derive(passphrase, salt, iters)
     expected = hmac.new(mac_key, nonce + ciphertext, hashlib.sha256).digest()
     if not hmac.compare_digest(tag, expected):
         raise ValueError("Wrong password (or the file is corrupted).")
     ks = _keystream(enc_key, nonce, len(ciphertext))
     return bytes(c ^ k for c, k in zip(ciphertext, ks))
+
+
+def seal(passphrase: str, raw: bytes) -> bytes:
+    """Wrap *raw* in the current file format: magic, round count, salt, body."""
+    salt = os.urandom(16)
+    return (MAGIC + b"\n" + struct.pack(">I", _PBKDF2_ITERS) + salt
+            + _encrypt(passphrase, salt, raw, _PBKDF2_ITERS))
+
+
+def unseal(blob: bytes, passphrase: str) -> bytes:
+    """Inverse of :func:`seal`; also reads the older OSMACCT2 layout.
+    Raises ValueError for a foreign file or a wrong passphrase."""
+    if blob.startswith(MAGIC + b"\n"):
+        body = blob[len(MAGIC) + 1:]
+        if len(body) < 4 + 16 + 48:
+            raise ValueError("This account backup file is truncated.")
+        (iters,) = struct.unpack(">I", body[:4])
+        if not 1 <= iters <= _MAX_ITERS:
+            raise ValueError("This account backup file is corrupted.")
+        salt, sealed = body[4:20], body[20:]
+    elif blob.startswith(_LEGACY_MAGIC + b"\n"):
+        body = blob[len(_LEGACY_MAGIC) + 1:]
+        iters, salt, sealed = _LEGACY_ITERS, body[:16], body[16:]
+    else:
+        raise ValueError("This is not an AMail account backup file.")
+    return _decrypt(passphrase, salt, sealed, iters)
 
 
 def export_accounts(db, passphrase: str) -> bytes:
@@ -98,8 +134,7 @@ def export_accounts(db, passphrase: str) -> bytes:
         "msal_cache": keyring.get_password(APP_NAME, oauth._CACHE_KEY),
     }
     raw = json.dumps(payload).encode("utf-8")
-    salt = os.urandom(16)
-    return MAGIC + b"\n" + salt + _encrypt(passphrase, salt, raw)
+    return seal(passphrase, raw)
 
 
 def import_accounts(db, blob: bytes, passphrase: str, max_add: int | None = None):
@@ -111,11 +146,7 @@ def import_accounts(db, blob: bytes, passphrase: str, max_add: int | None = None
     are skipped — import must not let a license exceed its account limit.
     Raises ValueError on bad file / wrong passphrase.
     """
-    if not blob.startswith(MAGIC + b"\n"):
-        raise ValueError("This is not an AMail account backup file.")
-    body = blob[len(MAGIC) + 1:]
-    salt, sealed = body[:16], body[16:]
-    raw = _decrypt(passphrase, salt, sealed)
+    raw = unseal(blob, passphrase)
     payload = json.loads(raw.decode("utf-8"))
 
     if payload.get("msal_cache"):

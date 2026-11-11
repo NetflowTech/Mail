@@ -699,11 +699,15 @@ class Database:
         """The folder *name* plus every descendant (rows starting with
         ``name + delim``), deepest first — so callers can delete children
         before their parent on the server."""
+        # Exact prefix compare, not LIKE: in LIKE "_" matches any character
+        # and matching ignores case, so deleting "Q1_2024" would also select
+        # (and delete on the server) "Q1-2024/Invoices".
+        prefix = name + delim
         with self._lock:
             rows = self.conn.execute(
                 "SELECT name FROM account_folders WHERE account_id=? "
-                "AND (name=? OR name LIKE ?)",
-                (account_id, name, name + delim + "%")).fetchall()
+                "AND (name=? OR substr(name, 1, ?) = ?)",
+                (account_id, name, len(prefix), prefix)).fetchall()
         names = [r["name"] for r in rows]
         if name not in names:
             names.append(name)

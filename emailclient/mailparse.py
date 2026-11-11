@@ -70,10 +70,15 @@ def _placeholder(account_id: int, folder: str, uid: int,
 
 
 def _sanitize_filename(name: str, fallback: str) -> str:
-    """Keep only a safe basename: strip path separators and NULs."""
+    """Keep only a safe basename: strip path separators, NULs and colons."""
     name = (name or "").replace("\x00", "")
     # Take the last path component for both separator styles.
     name = name.replace("\\", "/").rsplit("/", 1)[-1].strip()
+    # A colon is a drive letter on Windows: joining the attachment folder with
+    # "D:evil.exe" throws the folder away and writes to drive D's current
+    # directory (a USB stick or a mapped share). It is also the alternate-data-
+    # stream separator on NTFS. Never let one through.
+    name = name.replace(":", "_")
     if not name or name in (".", ".."):
         return fallback
     return name
@@ -261,6 +266,10 @@ def _build_message(msg, account_id: int, folder: str, uid: int,
                 dest_dir = attachment_dir / uuid.uuid4().hex
                 dest_dir.mkdir(parents=True, exist_ok=True)
                 dest = dest_dir / safe
+                # Belt and braces: whatever the name, the file must land
+                # inside the folder made for it.
+                if dest.resolve().parent != dest_dir.resolve():
+                    continue
                 dest.write_bytes(content)
                 items.append({"name": filename, "path": str(dest),
                               "size": len(content), "cid": cid,
