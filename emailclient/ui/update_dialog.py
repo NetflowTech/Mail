@@ -1,9 +1,11 @@
 """The one-click 'Update available' dialog with download progress."""
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QProgressBar,
                                QPushButton, QVBoxLayout)
 
+from .. import updater
 from . import theme
 
 
@@ -19,16 +21,23 @@ class UpdateDialog(QDialog):
         lay.setSpacing(10)
 
         title = QLabel(f"AMail {ver} is available")
+        title.setTextFormat(Qt.TextFormat.PlainText)
         f = title.font()
         f.setPointSize(15)
         f.setBold(True)
         title.setFont(f)
         lay.addWidget(title)
 
-        notes = QLabel(str(manifest.get("notes", "")).strip() or "Bug fixes and improvements.")
+        # The notes come from the server: plain text only, nothing clickable.
+        notes = QLabel(updater.release_notes(manifest)
+                       or "Bug fixes and improvements.")
+        notes.setTextFormat(Qt.TextFormat.PlainText)
+        notes.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+        notes.setOpenExternalLinks(False)
         notes.setWordWrap(True)
         notes.setStyleSheet(f"color: {theme.TEXT_DIM};")
         lay.addWidget(notes)
+        self.notes_label = notes
 
         self.progress = QProgressBar()
         self.progress.setVisible(False)

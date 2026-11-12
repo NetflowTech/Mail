@@ -215,3 +215,78 @@ class TestApplyUpdateWindowsFlags:
         assert "/SUPPRESSMSGBOXES" not in args
         assert "/CLOSEAPPLICATIONS" in args
         assert any(a.startswith("/LOG=") for a in args)
+
+
+class TestReleaseNotes:
+    """Notes come from version.json on the server: display-only, plain text,
+    cleaned and capped."""
+
+    def test_plain_notes_pass_through(self):
+        from emailclient.updater import release_notes
+        m = {"notes": "Read status is per computer.\nTables in compose."}
+        assert release_notes(m) == "Read status is per computer.\nTables in compose."
+
+    def test_missing_or_non_string_is_empty(self):
+        from emailclient.updater import release_notes
+        assert release_notes({}) == ""
+        assert release_notes({"notes": None}) == ""
+        assert release_notes({"notes": ["a", "b"]}) == ""
+        assert release_notes({"notes": 42}) == ""
+        assert release_notes("not a dict") == ""
+
+    def test_markup_is_kept_as_literal_text(self):
+        # Not stripped: the labels render PlainText, so this shows as typed
+        # instead of becoming a link.
+        from emailclient.updater import release_notes
+        m = {"notes": '<a href="https://evil.example">Click to update</a>'}
+        assert release_notes(m) == '<a href="https://evil.example">Click to update</a>'
+
+    def test_control_and_invisible_characters_are_dropped(self):
+        from emailclient.updater import release_notes
+        # bell, NUL, RTL override, zero-width space, soft hyphen
+        m = {"notes": "Up\x07da\x00te ‮now​­ please"}
+        assert release_notes(m) == "Update now please"
+
+    def test_crlf_tabs_and_blank_runs_are_normalised(self):
+        from emailclient.updater import release_notes
+        m = {"notes": "\r\n\r\nOne\ttwo\r\n\r\n\r\n\r\nThree   four\r\n\r\n"}
+        assert release_notes(m) == "One two\n\nThree four"
+
+    def test_capped_lines_and_chars(self):
+        from emailclient import updater
+        many = "\n".join(f"line {i}" for i in range(50))
+        assert updater.release_notes({"notes": many}).count("\n") == updater.NOTES_MAX_LINES - 1
+        long = "x" * 5000
+        out = updater.release_notes({"notes": long})
+        assert len(out) == updater.NOTES_MAX_CHARS + 1 and out.endswith("…")
+
+
+class TestFetchManifestShape:
+    def _serve(self, monkeypatch, payload: bytes):
+        import io
+        from emailclient import updater
+
+        class Resp(io.BytesIO):
+            headers = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        monkeypatch.setattr(updater.urllib.request, "urlopen",
+                            lambda *a, **k: Resp(payload))
+        return updater
+
+    def test_non_object_json_is_rejected(self, monkeypatch):
+        u = self._serve(monkeypatch, b'["2.0.99"]')
+        assert u.fetch_manifest("https://x/version.json") is None
+
+    def test_oversized_manifest_is_rejected(self, monkeypatch):
+        u = self._serve(monkeypatch, b'{"notes": "' + b"a" * 70_000 + b'"}')
+        assert u.fetch_manifest("https://x/version.json") is None
+
+    def test_normal_manifest_parses(self, monkeypatch):
+        u = self._serve(monkeypatch, b'{"version": "2.0.99", "notes": "hi"}')
+        assert u.fetch_manifest("https://x/version.json") == {"version": "2.0.99", "notes": "hi"}

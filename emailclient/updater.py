@@ -84,6 +84,10 @@ def is_newer(remote: str, local: str) -> bool:
     return r > l
 
 
+# version.json is a few hundred bytes; anything bigger is not a manifest.
+_MANIFEST_MAX_BYTES = 64 * 1024
+
+
 def fetch_manifest(url: str = MANIFEST_URL, timeout: float = 8.0) -> dict | None:
     """Fetch and parse the version manifest JSON. Returns None on any failure."""
     if not url.startswith("https://"):
@@ -92,9 +96,45 @@ def fetch_manifest(url: str = MANIFEST_URL, timeout: float = 8.0) -> dict | None
         from . import nethttp
         req = urllib.request.Request(url)
         with urllib.request.urlopen(req, context=nethttp.ssl_context(), timeout=timeout) as resp:
-            return json.loads(resp.read().decode())
+            raw = resp.read(_MANIFEST_MAX_BYTES + 1)
+        if len(raw) > _MANIFEST_MAX_BYTES:
+            return None
+        manifest = json.loads(raw.decode("utf-8"))
+        return manifest if isinstance(manifest, dict) else None
     except Exception:
         return None
+
+
+# "What's new" text shown in the update prompt. Whoever can push version.json
+# writes it, so it is treated as untrusted display text: shown as plain text
+# only (never rich text, never a clickable link), control and invisible
+# characters dropped, and capped so it cannot swamp the dialog.
+NOTES_MAX_LINES = 12
+NOTES_MAX_CHARS = 1200
+
+
+def release_notes(manifest: dict) -> str:
+    """Plain-text release notes from *manifest*, cleaned and capped. Empty
+    string when there are none or they are not a string."""
+    raw = manifest.get("notes", "") if isinstance(manifest, dict) else ""
+    if not isinstance(raw, str):
+        return ""
+    text = raw.replace("\r\n", "\n").replace("\r", "\n").replace("\t", " ")
+    # isprintable() is False for control characters and for format
+    # characters such as bidi overrides and zero-width joiners, which can
+    # make text read differently from what it says.
+    text = "".join(ch for ch in text if ch == "\n" or ch.isprintable())
+    lines: list[str] = []
+    for line in text.split("\n"):
+        line = " ".join(line.split())
+        if line or (lines and lines[-1]):
+            lines.append(line)
+    while lines and not lines[-1]:
+        lines.pop()
+    out = "\n".join(lines[:NOTES_MAX_LINES])
+    if len(out) > NOTES_MAX_CHARS:
+        out = out[:NOTES_MAX_CHARS].rstrip() + "…"
+    return out
 
 
 def _current_platform() -> str:

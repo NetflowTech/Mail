@@ -229,13 +229,19 @@ def main():
             return
         url, sha256 = asset
         new_ver = manifest.get("version", "")
-        reply = QMessageBox.question(
-            window,
-            "AMail Update Available",
-            f"AMail {new_ver} is available (you have {_ver}).\n\nInstall now?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+        box = QMessageBox(window)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("AMail Update Available")
+        # Plain text: the version and notes come from the server and must
+        # never be rendered as rich text (no links, no look-alike markup).
+        box.setTextFormat(Qt.TextFormat.PlainText)
+        box.setText(f"AMail {new_ver} is available (you have {_ver}).")
+        notes = _updater.release_notes(manifest)
+        box.setInformativeText(
+            (f"What's new:\n{notes}\n\n" if notes else "") + "Install now?")
+        box.setStandardButtons(QMessageBox.StandardButton.Yes
+                               | QMessageBox.StandardButton.No)
+        if box.exec() != QMessageBox.StandardButton.Yes:
             return
         tmp = _tempfile.NamedTemporaryFile(
             suffix=".exe", delete=False,
