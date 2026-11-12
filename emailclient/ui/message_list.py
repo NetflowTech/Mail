@@ -5,7 +5,7 @@ import json
 import re
 from email.utils import parseaddr
 
-from PySide6.QtCore import QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
 from PySide6.QtWidgets import (QAbstractItemView, QListWidget, QListWidgetItem,
                                QMenu, QStyle, QStyledItemDelegate)
@@ -490,8 +490,50 @@ class MessageList(QListWidget):
             return None
         return -mid
 
+    # -- keeping the user's place across a rebuild --------------------------
+    # refresh() is called whenever mail arrives or goes out, which can be every
+    # few seconds while someone is reading down a long inbox. A rebuild used to
+    # throw away the pages they had scrolled through, and re-selecting the open
+    # email made Qt scroll back to it, so the list kept snapping away from
+    # wherever they were. Now the same number of rows is reloaded, the row at
+    # the top of the view stays at the top, and selection is restored without
+    # moving the view.
+
+    def _capture_view(self) -> dict:
+        sb = self.verticalScrollBar()
+        top = self.indexAt(QPoint(0, 0))
+        top_item = self.item(top.row()) if top.isValid() else None
+        return {"rows": self.count(), "value": sb.value(),
+                "top_id": top_item.data(ROLE_MSG_ID) if top_item else None}
+
+    def _restore_view(self, saved: dict) -> None:
+        if saved["value"] <= 0:
+            return  # was at the top: stay there, so new mail shows at once
+        if saved["top_id"] is not None:
+            for i in range(self.count()):
+                it = self.item(i)
+                if it.data(ROLE_MSG_ID) == saved["top_id"]:
+                    self.scrollToItem(it, QAbstractItemView.ScrollHint.PositionAtTop)
+                    return
+        # The anchor row is gone (deleted, filtered out): keep the offset. The
+        # rows were just added and the view lays out lazily, so make it lay
+        # out now or the scrollbar range is still 0.
+        self.executeDelayedItemsLayout()
+        sb = self.verticalScrollBar()
+        sb.setValue(min(saved["value"], sb.maximum()))
+
+    def _select_quietly(self, item: QListWidgetItem) -> None:
+        """Make *item* current without Qt scrolling the view to it."""
+        was = self.hasAutoScroll()
+        self.setAutoScroll(False)
+        try:
+            self.setCurrentItem(item)
+        finally:
+            self.setAutoScroll(was)
+
     def refresh(self):
         current = self.currentItem().data(ROLE_MSG_ID) if self.currentItem() else None
+        saved = self._capture_view()
         self.clear()
         # Search / outbox views load in full and don't paginate; make sure a
         # stale "more pages" flag from a previous folder view can't trigger a
@@ -522,7 +564,8 @@ class MessageList(QListWidget):
                 item.setData(ROLE_PINNED, getattr(m, "pinned", False))
                 self.addItem(item)
                 if current is not None and m.id == current:
-                    self.setCurrentItem(item)
+                    self._select_quietly(item)
+            self._restore_view(saved)
             self._emit_counts()
             return
         if self.folder in ("OUTBOX", "DRAFTS"):
@@ -551,7 +594,8 @@ class MessageList(QListWidget):
                                  f"{row['error'] or _snippet(row['body'])}")
                 self.addItem(item)
                 if current is not None and -row["id"] == current:
-                    self.setCurrentItem(item)
+                    self._select_quietly(item)
+            self._restore_view(saved)
             self._emit_counts()
             return
         # Folder / group view — paginated: load the first page now, append more
@@ -562,6 +606,15 @@ class MessageList(QListWidget):
         self._has_more = True
         self._loading = False
         self._load_next_page()
+        # Bring back every page the user had scrolled through, so their place
+        # still exists; bounded by what was loaded before, so a fresh view is
+        # still just one page.
+        while self._has_more and self.count() < saved["rows"]:
+            before = self.count()
+            self._load_next_page()
+            if self.count() == before:
+                break
+        self._restore_view(saved)
 
     def _query_messages(self, offset: int):
         """One page of messages for the current folder/group view."""
@@ -628,7 +681,10 @@ class MessageList(QListWidget):
                 item = self._build_msg_item(m, acc, _msg_snippet(m))
                 self.addItem(item)
                 if self._restore_id is not None and m.id == self._restore_id:
-                    self.setCurrentItem(item)
+                    # Quietly: this can run on a later page while the user is
+                    # scrolling, and must not yank the view to the selection.
+                    self._select_quietly(item)
+                    self._restore_id = None
             self._offset += len(messages)
             self._has_more = len(messages) == self.page_size
             self._emit_counts()
