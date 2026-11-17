@@ -227,6 +227,102 @@ def normalise_block_spacing(document, start: int | None = None,
     cursor.endEditBlock()
 
 
+_BODY_FONT = re.compile(r"(<body\b[^>]*?)\s+style=(\"[^\"]*\"|'[^']*')", re.IGNORECASE)
+
+
+def without_body_font(html: str) -> str:
+    """A stored signature minus the editor default font QTextEdit.toHtml()
+    writes on <body>.
+
+    insertHtml applies that body style to every character of the fragment,
+    so a signature typed without picking a font arrived in compose carrying
+    the *settings window's* font (the 9pt UI font on Windows) as explicit
+    formatting: it looked smaller than the mail, and the format painter
+    brushed that UI font onto whatever it was used on. Without the body
+    style the signature inherits the mail's font like any other text, and
+    only the fonts the user actually chose for it travel with it."""
+    return _BODY_FONT.sub(r"\1", html or "")
+
+
+def split_soft_breaks(document, start: int, end: int) -> int:
+    """Turn the line separators (Shift+Enter, or the <br> pasted text comes
+    with) inside the paragraphs covering [start, end] into real paragraphs.
+    Returns how many were split. Document length is unchanged: a separator
+    character becomes a paragraph break, one for one."""
+    from PySide6.QtGui import QTextCursor as _Cursor
+
+    first = document.findBlock(start)
+    last = document.findBlock(max(start, end - 1) if end > start else start)
+    positions = []
+    block = first
+    while block.isValid():
+        text = block.text()
+        base = block.position()
+        positions.extend(base + i for i, ch in enumerate(text) if ch == " ")
+        if block == last:
+            break
+        block = block.next()
+    if not positions:
+        return 0
+    cursor = _Cursor(document)
+    cursor.beginEditBlock()
+    for pos in reversed(positions):       # back to front keeps positions valid
+        cursor.setPosition(pos)
+        cursor.deleteChar()
+        cursor.insertBlock()
+    cursor.endEditBlock()
+    return len(positions)
+
+
+def toggle_list(editor, style) -> None:
+    """Bullet / number the selected paragraphs, or un-list them when the
+    paragraph at the caret already has that style — every paragraph in the
+    selection, not just the caret's.
+
+    Text that arrived with line breaks instead of paragraphs (pasted, or
+    typed with Shift+Enter) is one paragraph to Qt, so bulleting a few of
+    its lines used to bullet the lot; those lines become paragraphs first.
+    List items also drop the 12px paragraph margins loaded HTML carries,
+    which spread the items apart."""
+    from PySide6.QtGui import QTextCursor as _Cursor
+
+    cursor = editor.textCursor()
+    doc = editor.document()
+    start, end = cursor.selectionStart(), cursor.selectionEnd()
+    split_soft_breaks(doc, start, end)
+    cursor.setPosition(start)
+    cursor.setPosition(end, _Cursor.MoveMode.KeepAnchor)
+    current = cursor.currentList()
+    blocks = []
+    block = doc.findBlock(start)
+    last = doc.findBlock(max(start, end - 1) if end > start else start)
+    while block.isValid():
+        blocks.append(block)
+        if block == last:
+            break
+        block = block.next()
+    cursor.beginEditBlock()
+    if current is not None and current.format().style() == style:
+        for block in blocks:
+            lst = block.textList()
+            if lst is not None:
+                lst.remove(block)
+            c = _Cursor(block)
+            bf = c.blockFormat()
+            bf.setIndent(0)
+            c.setBlockFormat(bf)
+    else:
+        for block in blocks:
+            c = _Cursor(block)
+            bf = c.blockFormat()
+            bf.setTopMargin(0)
+            bf.setBottomMargin(0)
+            c.setBlockFormat(bf)
+        cursor.createList(style)
+    cursor.endEditBlock()
+    editor.setTextCursor(cursor)
+
+
 def build_typing_room(cursor, lines: int = 2) -> None:
     """Empty paragraphs at the top of a reply, for the user to write in.
 
@@ -1676,15 +1772,7 @@ class ComposeDialog(QDialog):
             self._merge_format(fmt)
 
     def _toggle_list(self, style: "QTextListFormat.Style"):
-        cursor = self.body_edit.textCursor()
-        current = cursor.currentList()
-        if current and current.format().style() == style:
-            current.remove(cursor.block())
-            bf = cursor.blockFormat()
-            bf.setIndent(0)
-            cursor.setBlockFormat(bf)
-        else:
-            cursor.createList(style)
+        toggle_list(self.body_edit, style)
         self.body_edit.setFocus()
 
     def _change_indent(self, delta: int):
@@ -1868,7 +1956,7 @@ class ComposeDialog(QDialog):
         sig_html = self._current_signature_html()
         if sig_html:
             insert_paragraph_html(cursor, "-- ")
-            insert_paragraph_html(cursor, sig_html)
+            insert_paragraph_html(cursor, without_body_font(sig_html))
         else:
             sig = self._current_signature()
             if sig:
@@ -2242,7 +2330,7 @@ class ComposeDialog(QDialog):
             # Each part gets its own paragraph, so the line the user is
             # writing never ends up sharing a block with the signature.
             insert_paragraph_html(cursor, "-- ")
-            insert_paragraph_html(cursor, sig_html)
+            insert_paragraph_html(cursor, without_body_font(sig_html))
             return
         cursor.insertText(text_block)
         img_path = self._current_sig_image()

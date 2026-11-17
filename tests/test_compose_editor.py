@@ -494,3 +494,150 @@ class TestResizeByDragging:
         table_tools.full_width(ed, t)
         xs3, _, _ = ed._dragger._boundaries(t)
         assert xs3[-1] - xs3[0] == pytest.approx(xs[-1] - xs[0], abs=2)
+
+
+class TestToggleList:
+    def _editor_html(self, qtbot, html):
+        ed = _editor(qtbot)
+        ed.setHtml(html)
+        return ed
+
+    def _select(self, ed, text_from, text_to):
+        from PySide6.QtCore import QRegularExpression
+        from PySide6.QtGui import QTextCursor
+        plain = ed.toPlainText()
+        s = plain.index(text_from)
+        e = plain.index(text_to) + len(text_to)
+        cur = ed.textCursor()
+        cur.setPosition(s)
+        cur.setPosition(e, QTextCursor.MoveMode.KeepAnchor)
+        ed.setTextCursor(cur)
+
+    def _blocks(self, ed):
+        doc = ed.document()
+        return [doc.findBlockByNumber(i) for i in range(doc.blockCount())]
+
+    def test_only_the_selected_lines_of_a_soft_break_paragraph(self, qtbot):
+        from PySide6.QtGui import QTextListFormat
+        from emailclient.ui.compose import toggle_list
+        # Pasted text: one paragraph, lines separated by <br>.
+        ed = self._editor_html(qtbot, "<p>intro<br/>one<br/>two<br/>three<br/>outro</p>")
+        assert ed.document().blockCount() == 1
+        self._select(ed, "one", "two")
+        toggle_list(ed, QTextListFormat.Style.ListDisc)
+        listed = [b.text() for b in self._blocks(ed) if b.textList()]
+        assert listed == ["one", "two"]
+        assert ed.toPlainText() == "intro\none\ntwo\nthree\noutro"
+
+    def test_loaded_paragraph_margins_do_not_spread_the_items(self, qtbot):
+        from PySide6.QtGui import QTextListFormat
+        from emailclient.ui.compose import toggle_list
+        ed = self._editor_html(
+            qtbot, '<p style="margin-top:12px;margin-bottom:12px">a</p>'
+                   '<p style="margin-top:12px;margin-bottom:12px">b</p>')
+        self._select(ed, "a", "b")
+        toggle_list(ed, QTextListFormat.Style.ListDecimal)
+        for b in self._blocks(ed):
+            assert b.textList() is not None
+            assert b.blockFormat().topMargin() == 0
+            assert b.blockFormat().bottomMargin() == 0
+        assert "margin-top:12px" not in ed.toHtml()
+
+    def test_toggle_off_covers_the_whole_selection(self, qtbot):
+        from PySide6.QtGui import QTextListFormat
+        from emailclient.ui.compose import toggle_list
+        ed = _editor(qtbot)
+        ed.setPlainText("a\nb\nc")
+        self._select(ed, "a", "c")
+        toggle_list(ed, QTextListFormat.Style.ListDisc)
+        assert all(b.textList() for b in self._blocks(ed))
+        self._select(ed, "a", "c")
+        toggle_list(ed, QTextListFormat.Style.ListDisc)
+        assert not any(b.textList() for b in self._blocks(ed))
+        assert ed.toPlainText() == "a\nb\nc"
+
+    def test_caret_only_bullets_its_own_line(self, qtbot):
+        from PySide6.QtGui import QTextCursor, QTextListFormat
+        from emailclient.ui.compose import toggle_list
+        ed = self._editor_html(qtbot, "<p>one<br/>two<br/>three</p>")
+        cur = ed.textCursor()
+        cur.setPosition(ed.toPlainText().index("two") + 1)
+        ed.setTextCursor(cur)
+        toggle_list(ed, QTextListFormat.Style.ListDisc)
+        assert [b.text() for b in self._blocks(ed) if b.textList()] == ["two"]
+        assert ed.textCursor().block().text() == "two"
+
+
+class TestSignatureAndPainter:
+    def _signature_html(self, qtbot, chosen_font=False):
+        from PySide6.QtGui import QTextCharFormat
+        from emailclient.ui.account_settings import SignatureBody
+        sig = SignatureBody()
+        qtbot.addWidget(sig)
+        fmt = QTextCharFormat()
+        if chosen_font:
+            fmt.setFontFamilies(["Georgia"])
+            fmt.setFontPointSize(10)
+        sig.textCursor().insertText("Best regards,", fmt)
+        return sig.toHtml()
+
+    def test_signature_editor_uses_the_mail_font_size(self, qtbot):
+        from emailclient.ui.account_settings import SignatureBody
+        sig = SignatureBody()
+        qtbot.addWidget(sig)
+        assert sig.document().defaultFont().pointSize() == 13
+
+    def test_without_body_font_only_touches_the_body_tag(self, qtbot):
+        from emailclient.ui.compose import without_body_font
+        html = self._signature_html(qtbot)
+        assert 'style="' in html.split("<body")[1].split(">")[0]
+        out = without_body_font(html)
+        assert out.split("<body")[1].split(">")[0].strip() == ""
+        assert "Best regards," in out
+        assert without_body_font("") == ""
+
+    def test_plain_signature_inherits_the_mail_font(self, qtbot):
+        from PySide6.QtGui import QTextFormat
+        from emailclient.ui.compose import insert_paragraph_html, without_body_font
+        ed = _editor(qtbot)
+        ed.textCursor().insertText("Hello")
+        insert_paragraph_html(ed.textCursor(), without_body_font(self._signature_html(qtbot)))
+        sig_block = ed.document().lastBlock()
+        assert sig_block.text() == "Best regards,"
+        fmt = sig_block.begin().fragment().charFormat()
+        assert not fmt.hasProperty(QTextFormat.Property.FontFamilies)
+        assert not fmt.hasProperty(QTextFormat.Property.FontPointSize)
+        assert not fmt.hasProperty(QTextFormat.Property.FontPixelSize)
+
+    def test_chosen_signature_font_still_travels(self, qtbot):
+        from emailclient.ui.compose import insert_paragraph_html, without_body_font
+        ed = _editor(qtbot)
+        insert_paragraph_html(
+            ed.textCursor(),
+            without_body_font(self._signature_html(qtbot, chosen_font=True)))
+        fmt = ed.document().lastBlock().begin().fragment().charFormat()
+        assert fmt.fontFamilies() == ["Georgia"] and fmt.fontPointSize() == 10
+
+    def test_painter_from_the_signature_does_not_shrink_the_text(self, qtbot):
+        from PySide6.QtGui import QTextCharFormat, QTextCursor
+        from emailclient.ui import format_painter
+        from emailclient.ui.compose import insert_paragraph_html, without_body_font
+        ed = _editor(qtbot)
+        bold = QTextCharFormat()
+        bold.setFontWeight(700)
+        ed.textCursor().insertText("Hello team", bold)
+        insert_paragraph_html(ed.textCursor(), without_body_font(self._signature_html(qtbot)))
+        sig_block = ed.document().lastBlock()
+        cur = ed.textCursor()
+        cur.setPosition(sig_block.position() + 4)
+        ed.setTextCursor(cur)
+        char_fmt, block_fmt = format_painter.capture(ed)
+        assert not char_fmt.properties()            # plain = the mail's own font
+        sel = ed.textCursor()
+        sel.setPosition(0)
+        sel.setPosition(5, QTextCursor.MoveMode.KeepAnchor)
+        ed.setTextCursor(sel)
+        assert format_painter.apply(ed, char_fmt, block_fmt)
+        frag = ed.document().firstBlock().begin().fragment().charFormat()
+        assert frag.fontWeight() < 700                 # matches the signature
+        assert frag.fontPointSize() == 0               # no size forced on it
