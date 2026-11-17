@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
+from .attachment_safety import mark_from_internet
 from .models import EmailMessage
 
 
@@ -271,6 +272,7 @@ def _build_message(msg, account_id: int, folder: str, uid: int,
                 if dest.resolve().parent != dest_dir.resolve():
                     continue
                 dest.write_bytes(content)
+                mark_from_internet(str(dest))
                 items.append({"name": filename, "path": str(dest),
                               "size": len(content), "cid": cid,
                               "inline": bool(inline)})

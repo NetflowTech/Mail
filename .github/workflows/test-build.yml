@@ -38,6 +38,12 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install pyinstaller
 
+      # Security tests that need a real Windows machine (Mark of the Web).
+      - name: Run Windows security tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q tests/test_attachment_safety.py tests/test_sandbox.py
+
       - name: Build executable
         run: python -m PyInstaller AMail.spec --noconfirm
 

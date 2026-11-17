@@ -21,9 +21,10 @@ import os
 from PySide6.QtCore import QMargins, QUrl, Qt, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QPalette, QPixmap
 from PySide6.QtWidgets import (QDialog, QFrame, QHBoxLayout, QLabel,
-                               QPlainTextEdit, QPushButton, QScrollArea,
-                               QVBoxLayout, QWidget)
+                               QMessageBox, QPlainTextEdit, QPushButton,
+                               QScrollArea, QVBoxLayout, QWidget)
 
+from .. import attachment_safety
 from . import theme
 from .attachment_chips import file_thumb, human_size, type_color
 
@@ -168,6 +169,9 @@ class AttachmentPreviewDialog(QDialog):
     def __init__(self, path: str, parent=None, allow_download: bool = True):
         super().__init__(parent)
         self._path = path
+        # Download is offered only for a file that came in an email; the
+        # composer and the feedback form preview the user's own files.
+        self._from_mail = allow_download
         name = os.path.basename(path)
         self.setWindowTitle(name or "Attachment")
         self.resize(760, 620)
@@ -257,13 +261,28 @@ class AttachmentPreviewDialog(QDialog):
         self.download_requested.emit(self._path)
 
     def _open_external(self):
-        if os.path.isfile(self._path):
-            QDesktopServices.openUrl(QUrl.fromLocalFile(self._path))
+        if not os.path.isfile(self._path):
+            return
+        # Programs, scripts and shortcuts are never launched from AMail: the
+        # sender picks the file, and Open would run it with the user's rights.
+        if attachment_safety.is_blocked(self._path):
+            QMessageBox.information(
+                self, "Attachment blocked",
+                "Opening programs, scripts and shortcuts from email is blocked "
+                "for your protection.\n\nIf you trust the sender, Download "
+                "it and open it from there.")
+            return
+        # Files saved before attachments carried the internet tag get it now,
+        # so the app that opens it treats it as a download.
+        if self._from_mail:
+            attachment_safety.mark_from_internet(self._path)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(self._path))
 
     def _print(self):
         """Show a print preview of the attachment (PDF pages / image / text),
-        then let the user print. Unsupported types fall back to opening in the
-        OS default app, which can then print."""
+        then let the user print. Other types (Word, Excel, ...) open in the OS
+        default app, which can then print, except blocked types: Print must
+        never run a program."""
         from . import print_util
         ext = _ext(self._path)
         if ext == ".pdf":
@@ -278,5 +297,10 @@ class AttachmentPreviewDialog(QDialog):
                 print_util.show_text_preview(self, self._body.toPlainText(),
                                              os.path.basename(self._path))
                 return
+        if attachment_safety.is_blocked(self._path):
+            QMessageBox.information(
+                self, "Print",
+                "AMail can't print this type of file.")
+            return
         # Unsupported / failed → hand off to the OS default app.
         self._open_external()

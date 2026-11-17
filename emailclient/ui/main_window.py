@@ -15,8 +15,8 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QFileDialo
                                QMessageBox, QPushButton, QSizePolicy, QSplitter,
                                QTabBar, QToolBar, QVBoxLayout, QWidget)
 
-from .. import (approval, backup, credentials, fleet, google_oauth, notify,
-                oauth, outbox_preview, send_errors)
+from .. import (approval, attachment_safety, backup, credentials, fleet,
+                google_oauth, notify, oauth, outbox_preview, send_errors)
 from ..license import LicenseManager
 from ..settings import (BackupSettings, NotifSettings, SendSettings,
                         play_sound)
@@ -1796,6 +1796,8 @@ class MainWindow(QMainWindow):
             dest += src_ext
         try:
             shutil.copyfile(src_path, dest)
+            # The copy is a download: Windows/macOS warn before running it.
+            attachment_safety.mark_from_internet(dest)
             self.statusBar().showMessage(f"💾 Saved {os.path.basename(dest)}", 5000)
         except Exception as e:
             QMessageBox.warning(self, "Attachment", f"Could not save:\n{e}")
