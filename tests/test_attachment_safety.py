@@ -83,7 +83,8 @@ class TestPreviewDialog:
         from emailclient.ui import attachment_preview as ap
         rec = {"opened": [], "told": [], "tagged": []}
         monkeypatch.setattr(ap.QDesktopServices, "openUrl",
-                            lambda url: rec["opened"].append(url.toLocalFile()))
+                            lambda url: rec["opened"].append(
+                                os.path.normpath(url.toLocalFile())))
         monkeypatch.setattr(ap.QMessageBox, "information",
                             lambda *a, **k: rec["told"].append(a[2]))
         monkeypatch.setattr(ap.attachment_safety, "mark_from_internet",
@@ -98,7 +99,7 @@ class TestPreviewDialog:
         f.write_bytes(b"MZ payload")
         dlg = AttachmentPreviewDialog(str(f), **kw)
         qtbot.addWidget(dlg)
-        return dlg, str(f)
+        return dlg, os.path.normpath(str(f))
 
     def test_open_refuses_a_program(self, qtbot, tmp_path, calls):
         dlg, _ = self._dialog(qtbot, tmp_path, "Invoice.exe")
