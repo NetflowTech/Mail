@@ -1096,6 +1096,19 @@ class Database:
             return self.conn.execute(
                 "SELECT * FROM outbox WHERE id=?", (outbox_id,)).fetchone()
 
+    def recall_outbox(self, outbox_id: int) -> bool:
+        """Undo Send: turn a still-queued row back into a draft.
+
+        Returns False when the worker already claimed it (or it was never
+        queued) — then it is too late. Atomic against the worker's claim.
+        """
+        with self._lock:
+            cur = self.conn.execute(
+                "UPDATE outbox SET status='draft', send_after=0, error=''"
+                " WHERE id=? AND status='queued'", (outbox_id,))
+            self.conn.commit()
+            return cur.rowcount > 0
+
     def hold_outbox(self, outbox_id: int) -> bool:
         """Park an editable outbox row as a 'draft' so the worker won't send it.
 

@@ -1138,8 +1138,9 @@ class MainWindow(QMainWindow):
         dlg.activateWindow()
 
     def _show_undo_send(self, outbox_ids):
-        """Pop a Gmail-style Undo toast for freshly-queued email(s). Clicking Undo
-        deletes the still-queued outbox rows before the worker sends them."""
+        """Pop a Gmail-style Undo toast for freshly-queued email(s). Clicking
+        Undo turns the still-queued rows back into drafts before the worker
+        sends them, and reopens the mail so nothing typed is lost."""
         if not outbox_ids:
             return
         from ..settings import SendSettings
@@ -1150,16 +1151,7 @@ class MainWindow(QMainWindow):
         ids = list(outbox_ids)
 
         def _undo():
-            recalled = 0
-            for oid in ids:
-                row = self.db.get_outbox(oid)
-                if row is not None and row["status"] == "queued":
-                    self.db.delete_outbox(oid)
-                    recalled += 1
-            self.msg_list.refresh()
-            self.statusBar().showMessage(
-                f"↩ Recalled — email not sent" if recalled else
-                "Too late to recall — already sent", 5000)
+            self.undo_send(ids)
 
         # Replace any previous toast so they don't stack.
         prev = getattr(self, "_undo_toast", None)
@@ -1172,6 +1164,32 @@ class MainWindow(QMainWindow):
         toast.undo_clicked.connect(_undo)
         self._undo_toast = toast
         toast.start()
+
+    def undo_send(self, outbox_ids) -> list[int]:
+        """Recall freshly-sent mail: each row still in its Undo window goes
+        back to Drafts, and a single recalled mail reopens in the composer
+        (Gmail's behaviour). Returns the ids that were recalled."""
+        recalled = [oid for oid in outbox_ids if self.db.recall_outbox(oid)]
+        for oid in recalled:
+            self.send_watch.resolve(oid)
+        self.msg_list.refresh()
+        self.sidebar.refresh()
+        if not recalled:
+            self.statusBar().showMessage(
+                "Too late to recall — already sent", 5000)
+        elif len(recalled) == 1:
+            self.statusBar().showMessage("↩ Recalled — back in Drafts", 5000)
+            self._reopen_draft(recalled[0])
+        else:
+            self.statusBar().showMessage(
+                f"↩ Recalled {len(recalled)} emails — back in Drafts", 5000)
+        return recalled
+
+    def _reopen_draft(self, outbox_id: int) -> None:
+        dlg = ComposeDialog(self.db, edit_outbox_id=outbox_id, parent=self)
+        dlg.draft_saved.connect(self._on_draft_saved)
+        dlg.finished.connect(lambda _r: self.msg_list.refresh())
+        self._show_composer_nonmodal(dlg)
 
     def _discard(self, m, op: str):
         self._bulk_discard([m.id], op)
