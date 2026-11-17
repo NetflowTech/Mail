@@ -787,6 +787,8 @@ class _RichBody(QTextEdit):
         # the rows are as tight as they were in the source.
         normalise_block_spacing(doc, start, end)
         table_tools.fix_pasted_tables(doc, start, end, grid=grid)
+        # The cells read in the mail's font, not Excel's or Word's.
+        table_tools.match_mail_font(doc, start, end)
         self.setTextCursor(cursor)
 
     @staticmethod

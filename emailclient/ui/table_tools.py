@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from PySide6.QtCore import QRectF, QSize, Qt, Signal
 from PySide6.QtGui import (QBrush, QColor, QKeyEvent, QPainter, QPen,
-                           QTextCursor, QTextFrameFormat, QTextLength,
-                           QTextTable, QTextTableCellFormat, QTextTableFormat)
+                           QTextCursor, QTextFormat, QTextFrameFormat,
+                           QTextLength, QTextTable, QTextTableCellFormat,
+                           QTextTableFormat)
 from PySide6.QtWidgets import (QColorDialog, QLabel, QMenu, QVBoxLayout,
                                QWidget, QWidgetAction)
 
@@ -599,3 +600,57 @@ class ColumnDragger:
         fmt.setWidth(QTextLength(QTextLength.Type.FixedLength,
                                  round(sum(widths))))
         table.setFormat(fmt)
+
+
+# ----- pasted fonts ------------------------------------------------------------
+
+_FONT_PROPS = (
+    QTextFormat.Property.FontFamilies,
+    QTextFormat.Property.FontFamily if hasattr(QTextFormat.Property, "FontFamily") else None,
+    QTextFormat.Property.FontPointSize,
+    QTextFormat.Property.FontPixelSize,
+    QTextFormat.Property.FontSizeAdjustment,
+)
+
+
+def _without_font(fmt):
+    changed = False
+    for prop in _FONT_PROPS:
+        if prop is not None and fmt.hasProperty(prop):
+            fmt.clearProperty(prop)
+            changed = True
+    return changed
+
+
+def match_mail_font(document, start: int, end: int) -> int:
+    """Drop the font family and size a pasted table brought with it, so the
+    cells read in the mail's own font (Excel's Aptos Narrow 12 and Word's
+    Calibri 11 stood out from the rest of the mail). Bold, italic, colour,
+    highlight and alignment stay. Returns the number of runs changed."""
+    changed = 0
+    cursor = QTextCursor(document)
+    for table in tables_in_range(document, start, end):
+        first = table.firstPosition()
+        last = table.lastPosition()
+        block = document.findBlock(first)
+        while block.isValid() and block.position() <= last:
+            bfmt = block.charFormat()
+            if _without_font(bfmt):
+                cursor.setPosition(block.position())
+                cursor.setBlockCharFormat(bfmt)
+                changed += 1
+            it = block.begin()
+            while not it.atEnd():
+                frag = it.fragment()
+                it += 1
+                if not frag.isValid() or frag.charFormat().isImageFormat():
+                    continue
+                fmt = frag.charFormat()
+                if _without_font(fmt):
+                    cursor.setPosition(frag.position())
+                    cursor.setPosition(frag.position() + frag.length(),
+                                       QTextCursor.MoveMode.KeepAnchor)
+                    cursor.setCharFormat(fmt)
+                    changed += 1
+            block = block.next()
+    return changed

@@ -650,3 +650,40 @@ class TestSignatureAndPainter:
         frag = ed.document().firstBlock().begin().fragment().charFormat()
         assert frag.fontWeight() < 700                 # matches the signature
         assert frag.fontPointSize() == 0               # no size forced on it
+
+
+class TestPastedTableFont:
+    def test_cells_take_the_mail_font_but_keep_bold_and_colour(self, qtbot):
+        from PySide6.QtCore import QMimeData
+        from PySide6.QtGui import QTextFormat
+        from emailclient.ui import table_tools
+        from tests.test_pasted_html import EXCEL
+        ed = _editor(qtbot)
+        md = QMimeData()
+        md.setHtml(EXCEL.replace("<td>Widget</td>",
+                                 "<td style='color:#c00000'>Widget</td>"))
+        ed.insertFromMimeData(md)
+        doc = ed.document()
+        t = table_tools.tables_in_range(doc, 0, doc.characterCount())[0]
+        for r in range(t.rows()):
+            for c in range(t.columns()):
+                block = t.cellAt(r, c).firstCursorPosition().block()
+                for fmt in (block.charFormat(), block.begin().fragment().charFormat()):
+                    assert not fmt.hasProperty(QTextFormat.Property.FontFamilies)
+                    assert not fmt.hasProperty(QTextFormat.Property.FontPointSize)
+                    assert not fmt.hasProperty(QTextFormat.Property.FontPixelSize)
+        head = t.cellAt(0, 0).firstCursorPosition().charFormat()
+        assert head.fontWeight() == 700
+        widget = t.cellAt(1, 0).firstCursorPosition().block().begin().fragment().charFormat()
+        assert widget.foreground().color().name() == "#c00000"
+        assert "Aptos Narrow" not in ed.toHtml()
+
+    def test_text_outside_tables_keeps_its_font(self, qtbot):
+        from PySide6.QtCore import QMimeData
+        ed = _editor(qtbot)
+        md = QMimeData()
+        md.setHtml("<p><span style='font-family:Georgia;font-size:10pt'>note</span></p>"
+                   "<table><tr><td style='font-family:Georgia'>cell</td></tr></table>")
+        ed.insertFromMimeData(md)
+        html = ed.toHtml()
+        assert html.count("Georgia") == 1 and "note" in html.split("Georgia")[1][:80]
