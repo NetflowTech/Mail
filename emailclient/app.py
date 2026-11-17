@@ -17,14 +17,11 @@ import threading
 os.environ.setdefault(
     "QTWEBENGINE_CHROMIUM_FLAGS",
     "--disable-gpu --disable-gpu-compositing")
-# Chromium's sandbox is what contains a renderer exploit from a hostile email,
-# so it stays on everywhere it has been tested: from source, and the frozen
-# macOS .app. (The .app's old CrBrowserMain SIGABRT came from the GPU flags,
-# --disable-gpu plus --disable-software-rasterizer left nothing to draw with,
-# not from the sandbox.) Frozen Windows builds have never shipped with it on,
-# so keep them as they are until that's tested on a real PC.
-if getattr(sys, "frozen", False) and sys.platform == "win32":
-    os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
+# Never set QTWEBENGINE_DISABLE_SANDBOX: Chromium's sandbox is what contains a
+# renderer exploit from a hostile email. It runs in the frozen macOS .app and
+# Windows build alike (both tested). The .app's old CrBrowserMain SIGABRT came
+# from the GPU flags (--disable-gpu plus --disable-software-rasterizer left
+# nothing to draw with), not from the sandbox.
 
 # Point all SSL users (urllib, requests/MSAL, smtplib) to the bundled certifi
 # CA store — macOS Python does not use the system keychain by default, so
