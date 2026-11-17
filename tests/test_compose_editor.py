@@ -576,16 +576,25 @@ class TestSignatureAndPainter:
         qtbot.addWidget(sig)
         fmt = QTextCharFormat()
         if chosen_font:
-            fmt.setFontFamilies(["Georgia"])
+            # toHtml() omits a font equal to the editor default, so pick one
+            # that is not the configured mail font.
+            fmt.setFontFamilies([self._other_font()])
             fmt.setFontPointSize(10)
         sig.textCursor().insertText("Best regards,", fmt)
         return sig.toHtml()
 
+    @staticmethod
+    def _other_font() -> str:
+        from emailclient.settings import ComposeSettings
+        return "Georgia" if ComposeSettings().font_family != "Georgia" else "Verdana"
+
     def test_signature_editor_uses_the_mail_font_size(self, qtbot):
         from emailclient.ui.account_settings import SignatureBody
+        from emailclient.settings import ComposeSettings
         sig = SignatureBody()
         qtbot.addWidget(sig)
-        assert sig.document().defaultFont().pointSize() == 13
+        assert sig.document().defaultFont().pointSize() == ComposeSettings().font_size
+        assert sig.document().defaultFont().family() == ComposeSettings().font_family
 
     def test_without_body_font_only_touches_the_body_tag(self, qtbot):
         from emailclient.ui.compose import without_body_font
@@ -616,7 +625,7 @@ class TestSignatureAndPainter:
             ed.textCursor(),
             without_body_font(self._signature_html(qtbot, chosen_font=True)))
         fmt = ed.document().lastBlock().begin().fragment().charFormat()
-        assert fmt.fontFamilies() == ["Georgia"] and fmt.fontPointSize() == 10
+        assert fmt.fontFamilies() == [self._other_font()] and fmt.fontPointSize() == 10
 
     def test_painter_from_the_signature_does_not_shrink_the_text(self, qtbot):
         from PySide6.QtGui import QTextCharFormat, QTextCursor

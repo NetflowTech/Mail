@@ -166,6 +166,33 @@ class ComposeSettings:
     def spell_check(self, v: bool) -> None:
         self._qs.setValue("spell_check", bool(v))
 
+    # The font a mail is written in when the user picks none — and the font
+    # the signature is edited and sent in, so the two always match. Arial is
+    # on every machine a recipient could be reading on.
+    DEFAULT_FONT_FAMILY = "Arial"
+    DEFAULT_FONT_SIZE = 13
+
+    @property
+    def font_family(self) -> str:
+        v = self._qs.value("compose_font_family")
+        return str(v) if v else self.DEFAULT_FONT_FAMILY
+
+    @font_family.setter
+    def font_family(self, v: str) -> None:
+        self._qs.setValue("compose_font_family", (v or "").strip())
+
+    @property
+    def font_size(self) -> int:
+        try:
+            size = int(float(self._qs.value("compose_font_size") or 0))
+        except (TypeError, ValueError):
+            size = 0
+        return size if 6 <= size <= 72 else self.DEFAULT_FONT_SIZE
+
+    @font_size.setter
+    def font_size(self, v: int) -> None:
+        self._qs.setValue("compose_font_size", int(v))
+
 
 class AppearanceSettings:
     """Look-and-feel preferences that aren't the theme itself."""

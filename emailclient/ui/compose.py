@@ -718,6 +718,20 @@ class _RichBody(QTextEdit):
         self._painter_cursor = None   # QCursor while the format painter is armed
         self._dragger = table_tools.ColumnDragger(self)   # table resize grips
 
+    def use_mail_font(self) -> None:
+        """Write (and show) text in the user's default mail font.
+
+        Set through the widget's own stylesheet: the app stylesheet gives
+        every widget the UI font, and a plain setFont() loses to it once the
+        window is polished — which is how mail went out in the UI font with
+        the signature in another. The document's default font follows the
+        widget font, so what QTextEdit.toHtml() puts on <body> is this."""
+        family, size = ComposeSettings().font_family, ComposeSettings().font_size
+        self.setStyleSheet(f"font-family: '{family}'; font-size: {size}pt;")
+        font = QFont(family, size)
+        self.setFont(font)
+        self.document().setDefaultFont(font)
+
     # ----- format painter --------------------------------------------------
 
     def set_painter_cursor(self, cursor) -> None:
@@ -1323,10 +1337,7 @@ class ComposeDialog(QDialog):
         self._spell = SpellHighlighter(self.body_edit.document())
         self._spell.set_enabled(ComposeSettings().spell_check)
         self.body_edit.set_spell_highlighter(self._spell)
-        body_font = self.body_edit.font()
-        body_font.setPointSize(13)
-        self.body_edit.setFont(body_font)
-        self.body_edit.document().setDefaultFont(body_font)
+        self.body_edit.use_mail_font()
 
         editor_bar = self._build_editor_bar()
 

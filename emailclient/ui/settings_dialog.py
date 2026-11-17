@@ -16,8 +16,9 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog,
 from .. import (account_list, account_transfer, approval, backup, config,
                 feedback, fleet, xlsx)
 from ..license import LicenseManager
-from ..settings import (SOUNDS, AppearanceSettings, BackupSettings, NotifSettings,
-                        ReaderSettings, SendSettings, play_sound)
+from ..settings import (SOUNDS, AppearanceSettings, BackupSettings,
+                        ComposeSettings, NotifSettings, ReaderSettings,
+                        SendSettings, play_sound)
 from . import theme
 from .attachment_chips import AttachmentArea
 from .license_dialog import LicenseDialog
@@ -136,6 +137,7 @@ class SettingsDialog(QDialog):
         self._send_settings = SendSettings()
         self._reader_settings = ReaderSettings()
         self._appearance_settings = AppearanceSettings()
+        self._compose_settings = ComposeSettings()
         # Guards for the background fleet refresh: stop touching widgets once the
         # dialog is closing, and don't run two refreshes at once.
         self._dialog_closing = False
@@ -314,6 +316,31 @@ class SettingsDialog(QDialog):
         lay.addWidget(self._guide(
             "How much room each message row gets. Nothing is hidden at "
             "Compact — the rows just sit closer together."))
+
+        lay.addWidget(self._heading("✎ Default font"))
+        font_row = QHBoxLayout()
+        font_row.addWidget(QLabel("Emails and signature:"))
+        from .compose import _FONTS, _SIZES
+        self.mail_font_combo = QComboBox()
+        self.mail_font_combo.addItems(_FONTS)
+        cur_family = self._compose_settings.font_family
+        if self.mail_font_combo.findText(cur_family) < 0:
+            self.mail_font_combo.addItem(cur_family)
+        self.mail_font_combo.setCurrentText(cur_family)
+        font_row.addWidget(self.mail_font_combo, 1)
+        self.mail_size_combo = QComboBox()
+        self.mail_size_combo.addItems(_SIZES)
+        cur_size = str(self._compose_settings.font_size)
+        if self.mail_size_combo.findText(cur_size) < 0:
+            self.mail_size_combo.addItem(cur_size)
+        self.mail_size_combo.setCurrentText(cur_size)
+        font_row.addWidget(self.mail_size_combo)
+        lay.addLayout(font_row)
+        lay.addWidget(self._guide(
+            "The font a new email starts in, and the one your signature is "
+            "written and sent in — so the two always match. Text you give "
+            "another font from the compose toolbar keeps it. Applies to the "
+            "next compose window you open."))
 
         lay.addWidget(self._heading("↩ Undo Send"))
         undo_row = QHBoxLayout()
@@ -1602,6 +1629,11 @@ class SettingsDialog(QDialog):
         self._settings.auto_dismiss_seconds = self.auto_dismiss_combo.currentData()
         self._send_settings.undo_send_seconds = \
             self._undo_choices[self.undo_combo.currentIndex()][0]
+        self._compose_settings.font_family = self.mail_font_combo.currentText()
+        try:
+            self._compose_settings.font_size = int(self.mail_size_combo.currentText())
+        except ValueError:
+            pass
         self._reader_settings.load_remote_images = self.remote_img_cb.isChecked()
         self._appearance_settings.show_email = self.show_email_cb.isChecked()
         chosen = self.theme_combo.currentData()

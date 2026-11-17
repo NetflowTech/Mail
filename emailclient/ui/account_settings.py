@@ -36,11 +36,8 @@ class SignatureBody(_RichBody):
         # re-render crisply from the original instead of upscaling a thumbnail.
         self._img_sources: dict[str, str] = {}
         # Same default font as the compose body, so the signature is edited
-        # at the size it will be sent at (the window's 9pt UI font is not).
-        font = self.font()
-        font.setPointSize(13)
-        self.setFont(font)
-        self.document().setDefaultFont(font)
+        # in the font it will be sent in (the window's 9pt UI font is not).
+        self.use_mail_font()
 
     def _dpr(self) -> float:
         """The screen's device-pixel ratio (2.0 on Retina)."""
