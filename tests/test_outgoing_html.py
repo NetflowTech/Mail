@@ -83,3 +83,50 @@ class TestTables:
         assert 'padding-left:4px; padding-right:4px;' in out
         assert '<td style=" padding-left:4px;">&nbsp;</td>' in out
         assert "border-width:1px" not in out   # width already explicit
+
+
+class TestLineBreaks:
+    def test_trailing_br_keeps_its_line(self):
+        # Shift+Enter at the end of a paragraph: Qt shows an empty line after
+        # it; browsers drop a trailing <br>. &nbsp; after it keeps the line.
+        html = f"{_QT_P}<span>Regards,<br /></span></p>"
+        out = email_ready_html(html)
+        assert "<br />&nbsp;</span></p>" in out
+
+    def test_only_the_last_br_in_a_run(self):
+        html = f"{_QT_P}a<br /><br /></p>"
+        assert email_ready_html(html) == f"{_QT_P}a<br /><br />&nbsp;</p>"
+
+    def test_paragraph_holding_only_a_br_is_two_lines(self):
+        html = f'{_QT_P}<span style=" font-size:14px;"><br /></span></p>'
+        assert "<br />&nbsp;</span></p>" in email_ready_html(html)
+
+
+class TestClientQuirks:
+    def test_duplicate_style_attributes_are_merged(self):
+        html = ('<li style=" font-size:14px; color:#1f2125;" '
+                'style=" margin-top:0px; margin-bottom:0px;">x</li>')
+        out = email_ready_html(html)
+        assert out.count("style=") == 1
+        assert ('style="font-size:14px; color:#1f2125; margin-top:0px; '
+                'margin-bottom:0px;">x</li>') in out
+
+    def test_white_backgrounds_are_dropped(self):
+        html = (f'<p style=" margin-top:0px; background-color:#ffffff;">'
+                '<span style=" color:#1f2125; background-color:#ffffff;">x</span></p>'
+                '<td bgcolor="#ffffff" style=" padding-left:4px;">y</td>')
+        out = email_ready_html(html)
+        assert "#ffffff" not in out and "bgcolor" not in out
+        assert "color:#1f2125" in out
+
+    def test_body_font_moves_onto_a_div(self):
+        html = ('<html><head></head><body style=" font-family:\'Segoe UI\'; '
+                'font-size:13px; font-weight:400; font-style:normal;">\n'
+                f'{_QT_P}hi</p></body></html>')
+        out = email_ready_html(html)
+        assert ('<body><div style=" font-family:\'Segoe UI\'; font-size:13px; '
+                'font-weight:400; font-style:normal;">') in out
+        assert out.endswith("hi</p></div></body></html>")
+
+    def test_fragment_without_body_is_fine(self):
+        assert email_ready_html(f"{_QT_P}hi</p>") == f"{_QT_P}hi</p>"

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import re
 
+from .pasted_html import strip_white_backgrounds
+
 # A paragraph the user left empty. Qt writes it as "<p ...><br /></p>".
 # Outlook's renderer (Word) drops a <br> that is the only thing in a
 # paragraph, then drops the now-empty paragraph — so every blank line the
@@ -51,12 +53,56 @@ def _fix_cell_tag(tag: str) -> str:
     return tag[:m.start(2)] + new_style + tag[m.end(2):]
 
 
+# A line break that is the last thing in its paragraph (Shift+Enter, or the
+# <br> text copied from a web page ends with). Qt shows the empty line after
+# it; browsers and Outlook drop a trailing <br>, so the mail arrived one line
+# shorter than the editor showed. "&nbsp;" after it keeps the line.
+_TRAILING_BR = re.compile(
+    r"(<br\s*/?>)((?:\s*</span>)*\s*</(?:p|li|td|th|div)>)", re.IGNORECASE)
+
+# Qt writes a list item's two formats as two style attributes on one <li>.
+# Browsers keep the first and ignore the second, so the margins were lost.
+_ANY_TAG = re.compile(r"<[a-zA-Z][^>]*>")
+
+# QTextEdit puts the default font on <body style>. Gmail throws the body's
+# attributes away, so text the user typed without picking a font arrived in
+# the recipient's default. A <div> carrying the same style survives.
+_BODY_STYLE = re.compile(r"<body\s+style=\"([^\"]*)\"\s*>", re.IGNORECASE)
+
+
+def _merge_duplicate_styles(tag: str) -> str:
+    styles = list(_STYLE_ATTR.finditer(tag))
+    if len(styles) < 2:
+        return tag
+    merged = "; ".join(s.group(2).strip().rstrip(";") for s in styles
+                       if s.group(2).strip())
+    out = tag
+    for s in reversed(styles[1:]):
+        out = out[:s.start()].rstrip() + out[s.end():]
+    first = _STYLE_ATTR.search(out)
+    return out[:first.start(2)] + merged + ";" + out[first.end(2):]
+
+
+def _wrap_body_style(html: str) -> str:
+    m = _BODY_STYLE.search(html)
+    if not m or "</body>" not in html:
+        return html
+    head = html[:m.start()] + f'<body><div style="{m.group(1)}">'
+    rest = html[m.end():]
+    i = rest.rfind("</body>")
+    return head + rest[:i] + "</div>" + rest[i:]
+
+
 def email_ready_html(html: str) -> str:
     """Normalise *html* from QTextEdit.toHtml() for delivery to any client."""
     if not html:
         return html
     out = _EMPTY_BLOCK.sub(r"\1&nbsp;\2", html)
+    out = _TRAILING_BR.sub(r"\1&nbsp;\2", out)
     out = _EMPTY_CELL.sub(r"\1&nbsp;\2", out)
     out = _UNITLESS_PAD.sub(r"\1\2px", out)
     out = _CELL_TAG.sub(lambda m: _fix_cell_tag(m.group(0)), out)
+    out = _ANY_TAG.sub(lambda m: _merge_duplicate_styles(m.group(0)), out)
+    out = strip_white_backgrounds(out)
+    out = _wrap_body_style(out)
     return out

@@ -316,3 +316,181 @@ class TestExportFileImagesOnlyOpensAppFiles:
         src = '<img src="file://attacker-host/share/x.png">'
         html, inline = export_file_images(src, data_dir / "inline")
         assert inline == [] and html == src
+
+
+class TestPasteFromExcel:
+    """The real shape of Excel's clipboard HTML (see tests/test_pasted_html)."""
+
+    def _paste(self, qtbot, html, text="Item\tQty\nWidget\t4"):
+        from PySide6.QtCore import QMimeData
+        from PySide6.QtGui import QImage
+        from emailclient.ui import table_tools
+        ed = _editor(qtbot)
+        ed.resize(700, 400)
+        ed.show()
+        qtbot.waitExposed(ed)
+        md = QMimeData()
+        if html:
+            md.setHtml(html)
+        md.setText(text)
+        img = QImage(10, 10, QImage.Format.Format_ARGB32)
+        img.fill(0xFFFFFFFF)
+        md.setImageData(img)
+        ed.insertFromMimeData(md)
+        doc = ed.document()
+        tables = table_tools.tables_in_range(doc, 0, doc.characterCount())
+        assert len(tables) == 1
+        return ed, tables[0]
+
+    def test_header_bold_and_grid_borders(self, qtbot):
+        from tests.test_pasted_html import EXCEL
+        ed, t = self._paste(qtbot, EXCEL)
+        assert "<img" not in ed.toHtml()
+        assert t.cellAt(0, 0).firstCursorPosition().charFormat().fontWeight() == 700
+        assert t.cellAt(1, 0).firstCursorPosition().charFormat().fontWeight() < 700
+        fmt = t.cellAt(1, 1).format().toTableCellFormat()
+        assert fmt.leftBorder() == 1.0 and fmt.bottomBorder() == 1.0
+        assert t.format().cellSpacing() == 0 and t.format().borderCollapse()
+
+    def test_grid_is_only_for_spreadsheets(self, qtbot):
+        # A borderless Word / web table was borderless on purpose.
+        ed, t = self._paste(qtbot, "<table><tr><td>a</td><td>b</td></tr></table>")
+        fmt = t.cellAt(0, 0).format().toTableCellFormat()
+        assert fmt.leftBorder() == 0
+
+    def test_tab_separated_text_becomes_a_table(self, qtbot):
+        ed, t = self._paste(qtbot, None, text="Item\tQty\nWidget\t4\nGadget\t10")
+        assert (t.rows(), t.columns()) == (3, 2)
+        assert t.cellAt(2, 1).firstCursorPosition().block().text() == "10"
+        assert t.cellAt(0, 0).format().toTableCellFormat().topBorder() == 1.0
+
+    def test_plain_prose_with_a_tab_stays_text(self, qtbot):
+        from PySide6.QtCore import QMimeData
+        ed = _editor(qtbot)
+        md = QMimeData()
+        md.setText("a\tb\nc")
+        ed.insertFromMimeData(md)
+        assert "<table" not in ed.toHtml()
+        assert ed.toPlainText() == "a\tb\nc"
+
+
+class TestPasteFromWeb:
+    def test_page_background_is_not_pasted(self, qtbot):
+        from PySide6.QtCore import QMimeData
+        from PySide6.QtCore import Qt
+        ed = _editor(qtbot)
+        md = QMimeData()
+        md.setHtml('<meta charset="utf-8"><p style="margin:0; background-color: '
+                   'rgb(255, 255, 255);"><span style="color: rgb(31, 33, 37); '
+                   'background-color: rgb(255, 255, 255);">Dear team,</span></p>')
+        ed.insertFromMimeData(md)
+        block = ed.document().firstBlock()
+        assert block.blockFormat().background().style() == Qt.BrushStyle.NoBrush
+        frag = block.begin().fragment().charFormat()
+        assert frag.background().style() == Qt.BrushStyle.NoBrush
+        assert frag.foreground().color().name() == "#1f2125"   # text colour kept
+        assert ed.toPlainText() == "Dear team,"
+
+    def test_yellow_highlight_is_kept(self, qtbot):
+        from PySide6.QtCore import QMimeData
+        ed = _editor(qtbot)
+        md = QMimeData()
+        md.setHtml('<span style="background-color:#ffff00">hot</span>')
+        ed.insertFromMimeData(md)
+        frag = ed.document().firstBlock().begin().fragment().charFormat()
+        assert frag.background().color().name() == "#ffff00"
+
+
+class TestResizeByDragging:
+    def _table(self, qtbot, cols=3):
+        from PySide6.QtCore import QPoint
+        from emailclient.ui import table_tools
+        ed = _editor(qtbot)
+        ed.resize(700, 400)
+        ed.show()
+        qtbot.waitExposed(ed)
+        ed.textCursor().insertText("above\n")
+        t = table_tools.insert_table(ed, 2, cols)
+        for c in range(cols):
+            t.cellAt(0, c).firstCursorPosition().insertText(f"c{c}")
+        xs, top, bottom = ed._dragger._boundaries(t)
+        y = int((top + bottom) / 2)
+        return ed, t, xs, y, QPoint
+
+    def test_grip_only_on_boundaries(self, qtbot):
+        ed, t, xs, y, P = self._table(qtbot)
+        assert ed._dragger.hover(P(int(xs[1]), y))
+        assert ed._dragger.hover(P(int(xs[-1]) - 2, y))         # right edge
+        assert not ed._dragger.hover(P(int((xs[0] + xs[1]) / 2), y))
+        assert not ed._dragger.hover(P(int(xs[1]), y + 300))    # below the table
+        assert not ed._dragger.press(P(int((xs[0] + xs[1]) / 2), y))
+
+    def test_right_edge_shrinks_the_whole_table(self, qtbot):
+        ed, t, xs, y, P = self._table(qtbot)
+        width0 = xs[-1] - xs[0]
+        assert ed._dragger.press(P(int(xs[-1]), y))
+        assert ed._dragger.move(P(int(xs[-1]) - 200, y))
+        assert ed._dragger.release()
+        xs2, _, _ = ed._dragger._boundaries(t)
+        assert xs2[-1] - xs2[0] < width0 - 150
+        cols = t.format().columnWidthConstraints()
+        assert len(cols) == 3 and all(c.type() == c.Type.FixedLength for c in cols)
+        # Proportions kept: each column keeps its share of the width.
+        w0 = [xs[i + 1] - xs[i] for i in range(3)]
+        total = sum(c.rawValue() for c in cols)
+        for c, w in zip(cols, w0):
+            assert c.rawValue() / total == pytest.approx(w / sum(w0), abs=0.02)
+        assert t.format().width().type() == t.format().width().Type.FixedLength
+
+    def test_inner_boundary_trades_width_between_neighbours(self, qtbot):
+        ed, t, xs, y, P = self._table(qtbot)
+        total0 = xs[-1] - xs[0]
+        assert ed._dragger.press(P(int(xs[1]), y))
+        ed._dragger.move(P(int(xs[1]) + 60, y))
+        ed._dragger.release()
+        cols = [c.rawValue() for c in t.format().columnWidthConstraints()]
+        assert cols[0] > cols[1] + 100
+        assert abs(sum(cols) - total0) <= 4
+        assert cols[2] == pytest.approx((xs[3] - xs[2]), abs=3)
+
+    def test_columns_never_vanish(self, qtbot):
+        ed, t, xs, y, P = self._table(qtbot)
+        ed._dragger.press(P(int(xs[1]), y))
+        ed._dragger.move(P(int(xs[1]) + 5000, y))
+        ed._dragger.release()
+        cols = [c.rawValue() for c in t.format().columnWidthConstraints()]
+        assert min(cols) >= ed._dragger.MIN_COL
+
+    def test_resized_table_exports_fixed_widths(self, qtbot):
+        from emailclient.outgoing_html import email_ready_html
+        ed, t, xs, y, P = self._table(qtbot)
+        ed._dragger.press(P(int(xs[-1]), y))
+        ed._dragger.move(P(int(xs[-1]) - 200, y))
+        ed._dragger.release()
+        out = email_ready_html(ed.toHtml())
+        import re
+        assert re.search(r'<table[^>]* width="\d+"', out)
+        assert len(re.findall(r'<td width="\d+"', out)) == 3
+
+    def test_mouse_press_on_grip_does_not_move_the_caret(self, qtbot):
+        from PySide6.QtCore import Qt
+        ed, t, xs, y, P = self._table(qtbot)
+        before = ed.textCursor().position()
+        qtbot.mousePress(ed.viewport(), Qt.MouseButton.LeftButton, pos=P(int(xs[1]), y))
+        assert ed._dragger.dragging
+        qtbot.mouseMove(ed.viewport(), P(int(xs[1]) + 40, y))
+        qtbot.mouseRelease(ed.viewport(), Qt.MouseButton.LeftButton, pos=P(int(xs[1]) + 40, y))
+        assert not ed._dragger.dragging
+        assert ed.textCursor().position() == before
+        assert t.format().columnWidthConstraints()
+
+    def test_fit_to_contents_and_full_width(self, qtbot):
+        from emailclient.ui import table_tools
+        ed, t, xs, y, P = self._table(qtbot)
+        table_tools.fit_to_contents(ed, t)
+        xs2, _, _ = ed._dragger._boundaries(t)
+        assert xs2[-1] - xs2[0] < (xs[-1] - xs[0]) / 2
+        assert not t.format().columnWidthConstraints()
+        table_tools.full_width(ed, t)
+        xs3, _, _ = ed._dragger._boundaries(t)
+        assert xs3[-1] - xs3[0] == pytest.approx(xs[-1] - xs[0], abs=2)

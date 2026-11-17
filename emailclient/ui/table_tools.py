@@ -83,13 +83,45 @@ def tables_in_range(document, start: int, end: int) -> list[QTextTable]:
     return found
 
 
-def fix_pasted_tables(document, start: int, end: int) -> int:
+def _has_any_border(table: QTextTable) -> bool:
+    none = QTextFrameFormat.BorderStyle.BorderStyle_None
+    if table.format().border() > 0:
+        return True
+    for r in range(table.rows()):
+        for c in range(table.columns()):
+            fmt = table.cellAt(r, c).format().toTableCellFormat()
+            if any(getattr(fmt, f"{side}BorderStyle")() != none
+                   for side in ("left", "right", "top", "bottom")):
+                return True
+    return False
+
+
+def fix_pasted_tables(document, start: int, end: int, *, grid: bool = False,
+                      collapse: bool = True) -> int:
     """Make tables that arrived through insertHtml look like they did in the
     source. Word and Excel give cells a border *style* and colour, but Qt
     reads no width for them, so it draws nothing. Give every styled side a
-    1px width. Returns the number of tables touched."""
+    1px width.
+
+    *grid*: the source was a spreadsheet. Its cells usually carry no borders
+    at all (gridlines are not borders), which pastes as loose columns of
+    text; a borderless spreadsheet range gets the thin Word-style grid the
+    user saw on screen. "Toggle borders" takes it off again.
+
+    *collapse*: no gap between cells (Qt's default is 2px, which no email
+    table wants; Excel's cellspacing=0 does not always survive its parser).
+
+    Returns the number of tables touched."""
     tables = tables_in_range(document, start, end)
+    none = QTextFrameFormat.BorderStyle.BorderStyle_None
     for table in tables:
+        if collapse:
+            tfmt = table.format()
+            if tfmt.cellSpacing() or not tfmt.borderCollapse():
+                tfmt.setCellSpacing(0)
+                tfmt.setBorderCollapse(True)
+                table.setFormat(tfmt)
+        add_grid = grid and not _has_any_border(table)
         for r in range(table.rows()):
             for c in range(table.columns()):
                 cell = table.cellAt(r, c)
@@ -97,7 +129,13 @@ def fix_pasted_tables(document, start: int, end: int) -> int:
                     continue   # part of a merged span; its origin handles it
                 fmt = cell.format().toTableCellFormat()
                 changed = False
-                none = QTextFrameFormat.BorderStyle.BorderStyle_None
+                if add_grid:
+                    fmt.setBorder(1.0)
+                    fmt.setBorderStyle(QTextFrameFormat.BorderStyle.BorderStyle_Solid)
+                    fmt.setBorderBrush(QBrush(QColor(border_color())))
+                    if not fmt.hasProperty(fmt.Property.TableCellLeftPadding):
+                        fmt.setPadding(4.0)
+                    changed = True
                 for side in ("Left", "Right", "Top", "Bottom"):
                     style = getattr(fmt, f"{side.lower()}BorderStyle")()
                     width = getattr(fmt, f"{side.lower()}Border")()
@@ -273,6 +311,9 @@ def add_table_actions(menu: QMenu, editor) -> bool:
     sub.addSeparator()
     sub.addAction("Cell shading…", lambda: shade_cells(editor, table))
     sub.addAction("Toggle borders", lambda: toggle_borders(editor, table))
+    sub.addSeparator()
+    sub.addAction("Fit to contents", lambda: fit_to_contents(editor, table))
+    sub.addAction("Full width", lambda: full_width(editor, table))
     return True
 
 
@@ -415,3 +456,146 @@ class TableMenu(QMenu):
     def _on_pick(self, rows: int, cols: int):
         self.close()
         self.picked.emit(rows, cols)
+
+
+# ----- sizing ---------------------------------------------------------------
+
+def fit_to_contents(editor, table: QTextTable) -> None:
+    """Let the table shrink to what its cells hold (Word's AutoFit)."""
+    fmt = table.format()
+    fmt.setWidth(QTextLength())
+    fmt.clearColumnWidthConstraints()
+    table.setFormat(fmt)
+
+
+def full_width(editor, table: QTextTable) -> None:
+    fmt = table.format()
+    fmt.setWidth(QTextLength(QTextLength.Type.PercentageLength, 100))
+    fmt.clearColumnWidthConstraints()
+    table.setFormat(fmt)
+
+
+class ColumnDragger:
+    """Drag a column boundary, or the table's right edge, the way Word does.
+
+    The editor forwards its mouse events: ``hover`` says whether the pointer
+    is on a grip (so the editor can show a resize cursor), ``press`` starts a
+    drag there, ``move`` applies it and ``release`` ends it. Between the
+    columns the boundary moves and the two neighbours trade width; on the
+    right edge every column scales, so a pasted table that is too wide gets
+    smaller as a whole.
+
+    Boundaries come from the layout: the table frame's rect and, for the
+    interior ones, the midpoint between neighbouring cells' content rects.
+    Widths are then pinned as fixed column constraints plus a fixed table
+    width, which Qt exports as <table width> and first-row <td width> — what
+    every mail client honours.
+    """
+
+    GRIP = 5        # px either side of a boundary
+    MIN_COL = 24    # px
+
+    def __init__(self, editor):
+        self.editor = editor
+        self._drag = None   # dict(table, index, x0, widths) while dragging
+
+    # -- geometry --------------------------------------------------------
+
+    def _tables(self) -> list[QTextTable]:
+        doc = self.editor.document()
+        return tables_in_range(doc, 0, doc.characterCount())
+
+    def _boundaries(self, table: QTextTable) -> tuple[list[float], float, float]:
+        """x of every column boundary (cols + 1 values, viewport coords) and
+        the table's top / bottom."""
+        lay = self.editor.document().documentLayout()
+        hs = self.editor.horizontalScrollBar().value()
+        vs = self.editor.verticalScrollBar().value()
+        frame = lay.frameBoundingRect(table)
+        cols = table.columns()
+        xs = [frame.left() - hs]
+        for c in range(1, cols):
+            left = right = None
+            for r in range(table.rows()):
+                cell = table.cellAt(r, c)
+                prev = table.cellAt(r, c - 1)
+                if (cell.column() != c or cell.row() != r
+                        or prev.column() != c - 1 or prev.columnSpan() != 1):
+                    continue
+                left = lay.blockBoundingRect(cell.firstCursorPosition().block()).left()
+                right = lay.blockBoundingRect(prev.firstCursorPosition().block()).right()
+                break
+            if left is None:
+                # Every row spans this boundary: split the table evenly.
+                xs.append(frame.left() + frame.width() * c / cols - hs)
+            else:
+                xs.append((left + right) / 2 - hs)
+        xs.append(frame.right() - hs)
+        return xs, frame.top() - vs, frame.bottom() - vs
+
+    def grip_at(self, pos) -> tuple[QTextTable, int, list[float]] | None:
+        """(table, boundary index 1..cols, boundaries) when *pos* is on a grip."""
+        x, y = pos.x(), pos.y()
+        for table in self._tables():
+            xs, top, bottom = self._boundaries(table)
+            if not (top <= y <= bottom):
+                continue
+            for i in range(1, len(xs)):
+                if abs(x - xs[i]) <= self.GRIP:
+                    return table, i, xs
+        return None
+
+    # -- events ----------------------------------------------------------
+
+    @property
+    def dragging(self) -> bool:
+        return self._drag is not None
+
+    def hover(self, pos) -> bool:
+        return self.grip_at(pos) is not None
+
+    def press(self, pos) -> bool:
+        hit = self.grip_at(pos)
+        if hit is None:
+            return False
+        table, index, xs = hit
+        widths = [xs[i + 1] - xs[i] for i in range(len(xs) - 1)]
+        self._drag = {"table": table, "index": index, "x0": pos.x(),
+                      "widths": widths}
+        return True
+
+    def move(self, pos) -> bool:
+        if self._drag is None:
+            return False
+        d = self._drag
+        table, i, w0 = d["table"], d["index"], d["widths"]
+        dx = pos.x() - d["x0"]
+        cols = len(w0)
+        if i >= cols:
+            # Right edge: scale every column, keep their proportions.
+            total0 = sum(w0)
+            total = max(self.MIN_COL * cols, total0 + dx)
+            widths = [w * total / total0 for w in w0]
+        else:
+            widths = list(w0)
+            left = max(self.MIN_COL, w0[i - 1] + dx)
+            moved = left - w0[i - 1]
+            right = max(self.MIN_COL, w0[i] - moved)
+            widths[i - 1] = w0[i - 1] + (w0[i] - right)
+            widths[i] = right
+        self._apply(table, widths)
+        return True
+
+    def release(self) -> bool:
+        was = self._drag is not None
+        self._drag = None
+        return was
+
+    @staticmethod
+    def _apply(table: QTextTable, widths: list[float]) -> None:
+        fmt = table.format()
+        fmt.setColumnWidthConstraints(
+            [QTextLength(QTextLength.Type.FixedLength, round(w)) for w in widths])
+        fmt.setWidth(QTextLength(QTextLength.Type.FixedLength,
+                                 round(sum(widths))))
+        table.setFormat(fmt)

@@ -37,6 +37,7 @@ from ..models import EmailMessage
 from ..settings import ComposeSettings
 
 log = logging.getLogger(__name__)
+from .. import pasted_html
 from ..outgoing_html import email_ready_html
 from ..smtp_sender import parse_rcpts
 from . import editor_icons, format_painter, table_tools, theme
@@ -619,6 +620,7 @@ class _RichBody(QTextEdit):
         self.setMouseTracking(True)   # fire mouseMove without a button held
         self._sel_img_pos = None      # doc pos of the selected image
         self._painter_cursor = None   # QCursor while the format painter is armed
+        self._dragger = table_tools.ColumnDragger(self)   # table resize grips
 
     # ----- format painter --------------------------------------------------
 
@@ -629,6 +631,9 @@ class _RichBody(QTextEdit):
                                   else Qt.CursorShape.IBeamCursor)
 
     def mouseReleaseEvent(self, event):
+        if self._dragger.release():
+            event.accept()
+            return
         super().mouseReleaseEvent(event)
         if (event.button() == Qt.MouseButton.LeftButton
                 and self.textCursor().hasSelection()):
@@ -654,8 +659,9 @@ class _RichBody(QTextEdit):
 
     # ----- tables ----------------------------------------------------------
 
-    def insert_pasted_html(self, html: str) -> None:
-        """insertHtml plus the clean-up a Word / Excel / web table needs."""
+    def insert_pasted_html(self, html: str, *, grid: bool = False) -> None:
+        """insertHtml plus the clean-up a Word / Excel / web table needs.
+        *grid*: the source was a spreadsheet (borderless cells get a grid)."""
         # No outer edit block here: while one is open, QTextTableCell.setFormat
         # on the freshly inserted table is silently lost (the cell formats in
         # fix_pasted_tables never landed).
@@ -667,7 +673,7 @@ class _RichBody(QTextEdit):
         # Word's paragraphs carry 12px margins into the cells; strip them so
         # the rows are as tight as they were in the source.
         normalise_block_spacing(doc, start, end)
-        table_tools.fix_pasted_tables(doc, start, end)
+        table_tools.fix_pasted_tables(doc, start, end, grid=grid)
         self.setTextCursor(cursor)
 
     @staticmethod
@@ -705,9 +711,21 @@ class _RichBody(QTextEdit):
         # A table copied from Excel / Word / a web page: those put a picture
         # of the cells on the clipboard too, and the image branch below used
         # to win — the user got a screenshot instead of an editable table.
-        if source.hasHtml() and table_tools.has_table(source.html()):
-            self.insert_pasted_html(source.html())
+        # The HTML is cleaned first: Office's class styles inlined (bold
+        # header rows, Excel borders), white page backgrounds dropped.
+        html = pasted_html.clean(source.html()) if source.hasHtml() else ""
+        if html and table_tools.has_table(html):
+            self.insert_pasted_html(
+                html, grid=pasted_html.is_spreadsheet(source.html()))
             return
+        if not html and source.hasText():
+            # A spreadsheet with no HTML on the clipboard still gives its
+            # cells as tab-separated text (and often a picture of the cells
+            # as well): make that a table too, not a screenshot.
+            tsv = pasted_html.table_from_tsv(source.text())
+            if tsv:
+                self.insert_pasted_html(tsv, grid=True)
+                return
         if source.hasImage():
             image = QImage(source.imageData())
             if not image.isNull():
@@ -730,6 +748,11 @@ class _RichBody(QTextEdit):
                 handled = True
             if handled:
                 return
+        if html:
+            # Ordinary rich text: same as Qt's own path, minus the white page
+            # background a web copy drags along on every paragraph.
+            self.textCursor().insertHtml(html)
+            return
         super().insertFromMimeData(source)
 
     def set_spell_highlighter(self, highlighter) -> None:
@@ -1056,15 +1079,29 @@ class _RichBody(QTextEdit):
         self.imageSelected.emit(info)
 
     def mousePressEvent(self, event):
+        if (event.button() == Qt.MouseButton.LeftButton
+                and self._painter_cursor is None
+                and self._dragger.press(event.position().toPoint())):
+            # On a column grip: the drag owns the mouse, the caret stays put.
+            event.accept()
+            return
         super().mousePressEvent(event)
         if event.button() == Qt.MouseButton.LeftButton:
             self._sel_img_pos = self._img_pos_under(event.position().toPoint())
             self._emit_selection()
 
     def mouseMoveEvent(self, event):
+        if self._dragger.dragging:
+            self._dragger.move(event.position().toPoint())
+            event.accept()
+            return
         super().mouseMoveEvent(event)
         if self._painter_cursor is not None:
             self.viewport().setCursor(self._painter_cursor)
+            return
+        if (not event.buttons()
+                and self._dragger.hover(event.position().toPoint())):
+            self.viewport().setCursor(Qt.CursorShape.SplitHCursor)
             return
         over_image = self._img_pos_under(event.position().toPoint()) is not None
         # Hand only over an actual image; restore the text caret everywhere else
