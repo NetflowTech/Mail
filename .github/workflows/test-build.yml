@@ -1,0 +1,69 @@
+name: Windows Test Build
+
+# A private test build for checking a change on a real PC before it ships.
+# It never reaches users:
+#   - It runs only on test-build/** branches (or by hand), never on a v* tag,
+#     so release.yml does not run.
+#   - The app finds updates only through version.json on main. This job has
+#     read-only access to the repo, so it cannot push version.json or create a
+#     release even by mistake.
+#   - The build is a workflow artifact (a zip on the run's page), not a release
+#     asset, and it is deleted after 3 days.
+#
+# This build has Chromium's sandbox forced on, to test it on Windows before it
+# is turned on for real.
+
+on:
+  push:
+    branches:
+      - 'test-build/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Turn the Chromium sandbox on for this build
+        shell: bash
+        run: |
+          python - <<'EOF'
+          import pathlib, re
+          p = pathlib.Path("emailclient/app.py")
+          s = p.read_text(encoding="utf-8").replace("\r\n", "\n")
+          s = re.sub(
+              r'^if getattr\(sys, "frozen", False\)[^\n]*:\n'
+              r'    os\.environ\.setdefault\("QTWEBENGINE_DISABLE_SANDBOX", "1"\)\n',
+              "", s, flags=re.M)
+          if '"QTWEBENGINE_DISABLE_SANDBOX"' in s:
+              raise SystemExit("app.py still disables the sandbox; update this step")
+          p.write_text(s, encoding="utf-8")
+          print("Sandbox override removed for this build.")
+          EOF
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller
+
+      - name: Build executable
+        run: python -m PyInstaller AMail.spec --noconfirm
+
+      - name: Upload test build
+        uses: actions/upload-artifact@v4
+        with:
+          name: AMail-TEST-sandbox-${{ github.sha }}
+          path: dist/AMail/
+          retention-days: 3
