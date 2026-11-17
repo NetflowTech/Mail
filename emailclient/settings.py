@@ -5,6 +5,7 @@ Pure logic (no widgets) so it stays unit-testable.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 
@@ -176,8 +177,11 @@ class ComposeSettings:
 
     @property
     def font_family(self) -> str:
-        v = self._qs.value("compose_font_family")
-        return str(v) if v else self.DEFAULT_FONT_FAMILY
+        # The name lands in a stylesheet and in the mail's HTML, so only
+        # what a font name is made of gets through.
+        v = re.sub(r"[^\w .-]", "", str(self._qs.value("compose_font_family") or ""))
+        v = " ".join(v.split())[:64]
+        return v or self.DEFAULT_FONT_FAMILY
 
     @font_family.setter
     def font_family(self, v: str) -> None:

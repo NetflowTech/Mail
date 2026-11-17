@@ -258,7 +258,7 @@ def split_soft_breaks(document, start: int, end: int) -> int:
     while block.isValid():
         text = block.text()
         base = block.position()
-        positions.extend(base + i for i, ch in enumerate(text) if ch == " ")
+        positions.extend(base + i for i, ch in enumerate(text) if ch == "\u2028")
         if block == last:
             break
         block = block.next()
@@ -735,6 +735,39 @@ class _RichBody(QTextEdit):
         self.setFont(font)
         self.document().setDefaultFont(font)
 
+    # ----- resources -------------------------------------------------------
+    # Pasted or dropped HTML can name any file in an <img src> or a table
+    # background, and QTextDocument opens whatever it is told to — on Windows
+    # a file://attacker/share path makes the machine log in to the attacker
+    # and leak the password hash, with nothing clicked. The editor therefore
+    # answers every resource request itself (same rule as the reader's
+    # SafeTextBrowser): data: images decode as normal, img:// resources are
+    # already in the document's cache, files the app wrote are served, and
+    # anything else is a blank image.
+
+    def loadResource(self, type_: int, url: QUrl):  # noqa: N802 (Qt API)
+        if url.scheme().lower() == "data":
+            return None   # QTextDocument decodes these itself
+        real = safe_paths.safe_app_file(url.toString())
+        if real:
+            img = QImage(real)
+            if not img.isNull():
+                return img
+        blank = QImage(1, 1, QImage.Format.Format_ARGB32)
+        blank.fill(0)
+        return blank
+
+    def _app_image(self, name: str) -> QImage:
+        """The image behind a document image name: the registered img://
+        resource, or the app-owned file it points at. Null for anything else."""
+        res = self.document().resource(
+            QTextDocument.ResourceType.ImageResource, QUrl(name))
+        image = res if isinstance(res, QImage) else QImage()
+        if image.isNull() or (image.width() == 1 and image.height() == 1):
+            real = safe_paths.safe_app_file(name)
+            image = QImage(real) if real else QImage()
+        return image
+
     # ----- format painter --------------------------------------------------
 
     def set_painter_cursor(self, cursor) -> None:
@@ -929,12 +962,7 @@ class _RichBody(QTextEdit):
 
     def _natural_image_size(self, fmt: QTextImageFormat) -> tuple[int, int]:
         """(width, height) of the underlying image resource, or (0, 0)."""
-        url = QUrl(fmt.name())
-        res = self.document().resource(
-            QTextDocument.ResourceType.ImageResource, url)
-        image = res if isinstance(res, QImage) else QImage()
-        if image.isNull() and url.isLocalFile():
-            image = QImage(url.toLocalFile())
+        image = self._app_image(fmt.name())
         if image.isNull():
             return 0, 0
         return image.width(), image.height()
@@ -1093,12 +1121,7 @@ class _RichBody(QTextEdit):
         txt_cur.insertText(side_text or "Your text here")
 
     def _natural_image_size_by_name(self, name: str) -> tuple[int, int]:
-        url = QUrl(name)
-        res = self.document().resource(
-            QTextDocument.ResourceType.ImageResource, url)
-        image = res if isinstance(res, QImage) else QImage()
-        if image.isNull() and url.isLocalFile():
-            image = QImage(url.toLocalFile())
+        image = self._app_image(name)
         return (image.width(), image.height()) if not image.isNull() else (0, 0)
 
     def _purge_image(self, name: str) -> int:
@@ -1155,12 +1178,7 @@ class _RichBody(QTextEdit):
         fmt = self.image_format_at(img_pos)
         if fmt is None:
             return None
-        name = fmt.name()
-        res = self.document().resource(
-            QTextDocument.ResourceType.ImageResource, QUrl(name))
-        img = res if isinstance(res, QImage) else QImage()
-        if img.isNull() and QUrl(name).isLocalFile():
-            img = QImage(QUrl(name).toLocalFile())
+        img = self._app_image(fmt.name())
         return img if not img.isNull() else None
 
     def crop_selected_image(self):

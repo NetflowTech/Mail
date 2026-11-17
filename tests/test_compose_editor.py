@@ -687,3 +687,71 @@ class TestPastedTableFont:
         ed.insertFromMimeData(md)
         html = ed.toHtml()
         assert html.count("Georgia") == 1 and "note" in html.split("Georgia")[1][:80]
+
+
+class TestEditorNeverOpensForeignFiles:
+    """Pasted HTML names a file; the editor must not open it (see
+    tests/test_safe_text_browser for the reader-side twin)."""
+
+    def test_pasted_file_image_never_touches_the_filesystem(self, qtbot, monkeypatch):
+        from PySide6.QtCore import QMimeData
+        from emailclient import safe_paths
+
+        def boom(_p):
+            raise AssertionError("a foreign path was opened")
+        monkeypatch.setattr(safe_paths.os.path, "realpath", boom)
+        monkeypatch.setattr(safe_paths.os.path, "isfile", boom)
+        ed = _editor(qtbot)
+        md = QMimeData()
+        md.setHtml('<p>hi</p><img src="file://attacker-host/share/x.png">'
+                   '<table background="file://attacker-host/share/t.png">'
+                   '<tr><td>x</td></tr></table>')
+        ed.insertFromMimeData(md)
+        assert ed.toPlainText().startswith("hi")
+        # Image helpers on that image name stay inside the app too.
+        assert ed._natural_image_size_by_name("file://attacker-host/share/x.png") == (0, 0)
+
+    def test_outside_local_file_is_blank_but_app_file_renders(self, qtbot, tmp_path, monkeypatch):
+        from PySide6.QtCore import QMimeData, QUrl
+        from PySide6.QtGui import QImage, QTextDocument
+        from emailclient import safe_paths
+        data = tmp_path / "amail"
+        data.mkdir()
+        monkeypatch.setattr(safe_paths.config, "data_dir", lambda: data)
+
+        def png(path, w):
+            img = QImage(w, 5, QImage.Format.Format_ARGB32)
+            img.fill(0xFFFF0000)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            assert img.save(str(path), "PNG")
+            return QUrl.fromLocalFile(str(path)).toString()
+        outside = png(tmp_path / "secret.png", 9)
+        inside = png(data / "sig_images" / "logo.png", 7)
+        ed = _editor(qtbot)
+        md = QMimeData()
+        md.setHtml(f'<img src="{outside}"><img src="{inside}">')
+        ed.insertFromMimeData(md)
+        doc = ed.document()
+        got_out = doc.resource(QTextDocument.ResourceType.ImageResource, QUrl(outside))
+        got_in = doc.resource(QTextDocument.ResourceType.ImageResource, QUrl(inside))
+        assert got_out.width() == 1          # blank stand-in
+        assert got_in.width() == 7           # the app's own file renders
+        assert ed._natural_image_size_by_name(outside) == (0, 0)
+        assert ed._natural_image_size_by_name(inside) == (7, 5)
+
+    def test_data_uri_still_renders(self, qtbot):
+        import base64
+        from PySide6.QtCore import QBuffer, QIODevice, QMimeData, QUrl
+        from PySide6.QtGui import QImage, QTextDocument
+        img = QImage(6, 4, QImage.Format.Format_ARGB32)
+        img.fill(0xFF00FF00)
+        buf = QBuffer()
+        buf.open(QIODevice.OpenModeFlag.WriteOnly)
+        img.save(buf, "PNG")
+        uri = "data:image/png;base64," + base64.b64encode(bytes(buf.data())).decode()
+        ed = _editor(qtbot)
+        md = QMimeData()
+        md.setHtml(f'<img src="{uri}">')
+        ed.insertFromMimeData(md)
+        got = ed.document().resource(QTextDocument.ResourceType.ImageResource, QUrl(uri))
+        assert got.width() == 6

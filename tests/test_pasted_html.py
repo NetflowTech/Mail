@@ -140,3 +140,11 @@ class TestTableFromTsv:
         assert ph.table_from_tsv("a\nb") is None               # one column
         assert ph.table_from_tsv("a\tb\nc") is None            # ragged
         assert ph.table_from_tsv("") is None
+
+
+class TestLimits:
+    def test_absurdly_wide_grid_is_not_a_table(self):
+        row = "\t".join(["x"] * 201)
+        assert ph.table_from_tsv(f"{row}\n{row}") is None
+        row = "\t".join(["x"] * 200)
+        assert ph.table_from_tsv(f"{row}\n{row}") is not None

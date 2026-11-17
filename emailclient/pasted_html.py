@@ -177,8 +177,8 @@ def table_from_tsv(text: str) -> str | None:
         return None
     if any(len(r) != len(rows[0]) for r in rows):
         return None
-    if len(rows) > 2000:
-        return None
+    if len(rows) > 2000 or len(rows[0]) > 200:
+        return None   # not a grid anyone meant to mail
     body = "".join(
         "<tr>" + "".join(f"<td>{_html.escape(c.strip())}</td>" for c in r) + "</tr>"
         for r in rows)

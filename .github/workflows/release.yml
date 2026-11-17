@@ -37,7 +37,7 @@ jobs:
           if [ "$(git cat-file -t "refs/tags/${GITHUB_REF_NAME}")" = "tag" ]; then
             git tag -l --format='%(contents)' "${GITHUB_REF_NAME}" \
               | sed '/^-----BEGIN PGP SIGNATURE-----/,$d' \
-              | head -n 12 | head -c 1200 > release_notes.txt
+              | head -n 12 > release_notes.txt
           fi
           echo "--- release notes ---"; cat release_notes.txt; echo "---"
 
@@ -78,6 +78,9 @@ jobs:
           $base = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/AMail-Setup-${{ steps.ver.outputs.version }}.exe"
           $notes = (Get-Content release_notes.txt -Raw -Encoding UTF8)
           if ($null -eq $notes) { $notes = "" }
+          # Cap in PowerShell, where strings are Unicode: a byte cut in bash
+          # could split a character. The app caps again when it shows them.
+          if ($notes.Length -gt 1200) { $notes = $notes.Substring(0, 1200) }
           $json = [ordered]@{
             version    = "${{ steps.ver.outputs.version }}"
             win_url    = $base

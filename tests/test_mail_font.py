@@ -64,3 +64,13 @@ class TestEditorsShareIt:
         assert f"'{want.font_family}'" in out
         assert f"font-size:{want.font_size}pt;" in out
         assert "<body><div style=" in out
+
+
+class TestFontNameIsOnlyAName:
+    def test_stylesheet_and_html_characters_are_dropped(self, cs):
+        cs._qs.setValue("compose_font_family", "Aptos'; background:url(x); <b>")
+        assert cs.font_family == "Aptos backgroundurlx b"
+        cs._qs.setValue("compose_font_family", "x" * 500)
+        assert len(cs.font_family) == 64
+        cs._qs.setValue("compose_font_family", ";;;")
+        assert cs.font_family == "Aptos"
