@@ -15,8 +15,8 @@ def cs(tmp_path):
 
 class TestSetting:
     def test_defaults(self, cs):
-        assert cs.font_family == "Arial"
-        assert cs.font_size == 13
+        assert cs.font_family == "Aptos"     # Outlook's own default
+        assert cs.font_size == 11
 
     def test_round_trip(self, cs):
         cs.font_family = "Georgia"
@@ -26,11 +26,11 @@ class TestSetting:
     def test_nonsense_falls_back(self, cs):
         cs.font_family = "   "
         cs.font_size = 0
-        assert cs.font_family == "Arial" and cs.font_size == 13
+        assert cs.font_family == "Aptos" and cs.font_size == 11
         cs._qs.setValue("compose_font_size", "huge")
-        assert cs.font_size == 13
+        assert cs.font_size == 11
         cs._qs.setValue("compose_font_size", 400)
-        assert cs.font_size == 13
+        assert cs.font_size == 11
 
 
 class TestEditorsShareIt:
@@ -61,5 +61,6 @@ class TestEditorsShareIt:
         body.use_mail_font()
         body.textCursor().insertText("Hello")
         out = email_ready_html(body.toHtml())
-        assert f"font-family:'{want.font_family}'; font-size:{want.font_size}pt;" in out
+        assert f"'{want.font_family}'" in out
+        assert f"font-size:{want.font_size}pt;" in out
         assert "<body><div style=" in out

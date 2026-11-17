@@ -70,6 +70,24 @@ _ANY_TAG = re.compile(r"<[a-zA-Z][^>]*>")
 _BODY_STYLE = re.compile(r"<body\s+style=\"([^\"]*)\"\s*>", re.IGNORECASE)
 
 
+# Office fonts are on every machine with Microsoft 365 and on none without.
+# Qt writes the family alone; a recipient without it would get their
+# client's fallback (Times, in some), so each gets the stack Outlook itself
+# uses: the closest look first, a universal font last.
+_FONT_STACKS = {
+    "aptos": "'Aptos','Calibri','Segoe UI','Helvetica Neue',Arial,sans-serif",
+    "calibri": "'Calibri','Carlito','Segoe UI','Helvetica Neue',Arial,sans-serif",
+    "segoe ui": "'Segoe UI','Helvetica Neue',Arial,sans-serif",
+}
+_SINGLE_FAMILY = re.compile(r"font-family:\s*'([^',;]+)'\s*(?=;|\"|')",
+                            re.IGNORECASE)
+
+
+def _font_fallbacks(m: re.Match) -> str:
+    stack = _FONT_STACKS.get(m.group(1).strip().lower())
+    return f"font-family:{stack}" if stack else m.group(0)
+
+
 def _merge_duplicate_styles(tag: str) -> str:
     styles = list(_STYLE_ATTR.finditer(tag))
     if len(styles) < 2:
@@ -104,5 +122,6 @@ def email_ready_html(html: str) -> str:
     out = _CELL_TAG.sub(lambda m: _fix_cell_tag(m.group(0)), out)
     out = _ANY_TAG.sub(lambda m: _merge_duplicate_styles(m.group(0)), out)
     out = strip_white_backgrounds(out)
+    out = _SINGLE_FAMILY.sub(_font_fallbacks, out)
     out = _wrap_body_style(out)
     return out

@@ -120,13 +120,32 @@ class TestClientQuirks:
         assert "color:#1f2125" in out
 
     def test_body_font_moves_onto_a_div(self):
-        html = ('<html><head></head><body style=" font-family:\'Segoe UI\'; '
+        html = ('<html><head></head><body style=" font-family:\'Georgia\'; '
                 'font-size:13px; font-weight:400; font-style:normal;">\n'
                 f'{_QT_P}hi</p></body></html>')
         out = email_ready_html(html)
-        assert ('<body><div style=" font-family:\'Segoe UI\'; font-size:13px; '
+        assert ('<body><div style=" font-family:\'Georgia\'; font-size:13px; '
                 'font-weight:400; font-style:normal;">') in out
         assert out.endswith("hi</p></div></body></html>")
 
     def test_fragment_without_body_is_fine(self):
         assert email_ready_html(f"{_QT_P}hi</p>") == f"{_QT_P}hi</p>"
+
+
+class TestOfficeFonts:
+    def test_aptos_gets_outlooks_fallback_stack(self):
+        html = ('<body style=" font-family:\'Aptos\'; font-size:11pt;">'
+                '<span style=" font-family:\'Aptos\';">x</span></body>')
+        out = email_ready_html(html)
+        assert out.count("font-family:'Aptos','Calibri','Segoe UI',"
+                         "'Helvetica Neue',Arial,sans-serif") == 2
+        assert "font-family:'Aptos';" not in out
+
+    def test_calibri_too_and_case_does_not_matter(self):
+        out = email_ready_html('<span style=" font-family:\'calibri\';">x</span>')
+        assert "'Calibri','Carlito'" in out
+
+    def test_other_fonts_and_lists_untouched(self):
+        html = ('<span style=" font-family:\'Georgia\';">a</span>'
+                '<span style=" font-family:\'Aptos\',\'sans-serif\';">b</span>')
+        assert email_ready_html(html) == html

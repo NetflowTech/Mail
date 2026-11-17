@@ -480,9 +480,12 @@ _TITLES = {"new": "New Message", "reply": "Reply",
            "reply_all": "Reply", "forward": "Forward"}
 
 _SIZES = ["10", "11", "12", "13", "14", "16", "18", "24", "32"]
-# Email-safe families every mail client renders correctly.
-_FONTS = ["Helvetica", "Arial", "Georgia", "Times New Roman", "Verdana",
-          "Tahoma", "Trebuchet MS", "Courier New", "Palatino", "Comic Sans MS"]
+# Email-safe families every mail client renders correctly, plus the two
+# Office fonts (Aptos, Calibri) — Outlook's own defaults, present wherever
+# Microsoft 365 is; outgoing_html gives them fallbacks for everyone else.
+_FONTS = ["Aptos", "Calibri", "Arial", "Helvetica", "Georgia",
+          "Times New Roman", "Verdana", "Tahoma", "Trebuchet MS",
+          "Courier New", "Palatino", "Comic Sans MS"]
 
 _IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")
 _MAX_INLINE_WIDTH = 640

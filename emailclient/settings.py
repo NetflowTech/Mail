@@ -167,10 +167,12 @@ class ComposeSettings:
         self._qs.setValue("spell_check", bool(v))
 
     # The font a mail is written in when the user picks none — and the font
-    # the signature is edited and sent in, so the two always match. Arial is
-    # on every machine a recipient could be reading on.
-    DEFAULT_FONT_FAMILY = "Arial"
-    DEFAULT_FONT_SIZE = 13
+    # the signature is edited and sent in, so the two always match. Aptos at
+    # 11pt is what Outlook and Word give the customers, so mail from AMail
+    # looks like the rest of theirs; outgoing_html adds the fallbacks for
+    # recipients without Office fonts.
+    DEFAULT_FONT_FAMILY = "Aptos"
+    DEFAULT_FONT_SIZE = 11
 
     @property
     def font_family(self) -> str:
