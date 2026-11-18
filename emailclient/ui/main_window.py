@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QFileDialo
                                QTabBar, QToolBar, QVBoxLayout, QWidget)
 
 from .. import (approval, attachment_safety, backup, credentials, fleet,
-                google_oauth, notify, oauth, outbox_preview, send_errors)
+                google_oauth, notify, oauth, org, outbox_preview, send_errors)
 from ..license import LicenseManager
 from ..settings import (BackupSettings, NotifSettings, SendSettings,
                         play_sound)
@@ -52,6 +52,8 @@ class MainWindow(QMainWindow):
     _approval_polled = Signal(bool, int, bool, list, list)
     # Emitted from the background fleet heartbeat → applied on the main thread.
     _fleet_applied = Signal(dict)
+    # Organization check-in answer, from a worker thread to the GUI thread.
+    _org_applied = Signal(dict)
     # Sentinel toast msg_id meaning "open the approvals queue" (not an email).
     _APPROVAL_TOAST_ID = -100000
 
@@ -393,6 +395,19 @@ class MainWindow(QMainWindow):
         self._fleet_timer.setInterval(120_000)
         self._fleet_timer.timeout.connect(self._fleet_tick)
 
+        # Organization: the admin panel signs this PC in to and out of managed
+        # mailboxes. Check in every ~30 s while joined (see _org_tick).
+        self._org_applied.connect(self._apply_org)
+        self._org_busy = False
+        self._org_lease_paused = False
+        self._org_failed_last = False   # last check-in got no answer
+        self._org_timer = QTimer(self)
+        self._org_timer.setInterval(30_000)
+        self._org_timer.timeout.connect(self._org_tick)
+        if org.is_joined():
+            self._org_timer.start()
+            QTimer.singleShot(3000, self._org_tick)
+
         # Every queued email gets a deadline: if it has not left by then the
         # user hears about it, instead of "Email queued" being the last word.
         self.send_watch = SendWatcher(self.db, self)
@@ -701,6 +716,9 @@ class MainWindow(QMainWindow):
                 theme.GOLD)))
         dlg.appearance_changed.connect(self._apply_appearance)
         dlg.exec()
+        # Destroyed here on the GUI thread, not later by whichever background
+        # thread drops the last reference (its own threads hold some).
+        dlg.deleteLater()
         # Popup position may have changed → move any visible cards immediately.
         self.toast.apply_settings()
         # The account-list label (name vs email) may have been toggled.
@@ -1299,7 +1317,13 @@ class MainWindow(QMainWindow):
 
     def _on_settings_requested(self, acc_id: int):
         dlg = AccountSettingsDialog(self.db, acc_id, self)
-        if dlg.exec():
+        try:
+            self._account_settings_done(dlg, acc_id, dlg.exec())
+        finally:
+            dlg.deleteLater()     # on the GUI thread (see _show_settings)
+
+    def _account_settings_done(self, dlg, acc_id: int, accepted) -> None:
+        if accepted:
             self.sidebar.refresh()
             if dlg.color_changed:
                 # Re-render the message-list dots with the account's new accent.
@@ -1326,7 +1350,20 @@ class MainWindow(QMainWindow):
                     self.statusBar().showMessage(
                         "🔁 Reconnecting account…", 6000)
 
+    def _managed_ids(self, acc_ids) -> list[int]:
+        return [a.id for a in self.db.list_accounts()
+                if a.id in set(acc_ids) and org.is_managed(a.email)]
+
+    def _refuse_managed(self, title: str) -> None:
+        QMessageBox.information(
+            self, title,
+            "Accounts managed by your organization are signed in and out by "
+            "your administrator. Ask them to remove it from this PC.")
+
     def _on_remove_requested(self, acc_id: int):
+        if self._managed_ids([acc_id]):
+            self._refuse_managed("Account Remove")
+            return
         reply = QMessageBox.question(
             self, "Account Remove",
             "Remove this account? Its cached emails will also be deleted.",
@@ -1340,6 +1377,9 @@ class MainWindow(QMainWindow):
     def _on_remove_multi_requested(self, acc_ids: list[int]):
         acc_ids = [a for a in acc_ids if a is not None]
         if not acc_ids:
+            return
+        if self._managed_ids(acc_ids):
+            self._refuse_managed("Remove Accounts")
             return
         n = len(acc_ids)
         reply = QMessageBox.question(
@@ -1357,8 +1397,14 @@ class MainWindow(QMainWindow):
         once (only the ticked fields), then reconnect the ones whose connection
         or password changed."""
         acc_ids = [a for a in acc_ids if a is not None]
-        if not acc_ids:
-            return
+        managed = set(self._managed_ids(acc_ids))
+        if managed:
+            # Their server settings and password belong to the admin panel:
+            # pointing one at another server would hand it the password.
+            acc_ids = [a for a in acc_ids if a not in managed]
+            if not acc_ids:
+                self._refuse_managed("Edit Accounts")
+                return
         dlg = BulkEditAccountsDialog(self.db, acc_ids, self)
         if not dlg.exec():
             return
@@ -1394,6 +1440,227 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"✅ Updated {applied} account(s)"
             + (" — reconnecting…" if reconnect else ""), 6000)
+
+    # -- organization (admin-managed mailboxes) --
+    def org_joined(self) -> None:
+        """Settings joined this PC to an organization: start checking in."""
+        self._org_timer.start()
+        QTimer.singleShot(0, self._org_tick)
+
+    def org_left(self) -> None:
+        """This PC left the organization: its managed mailboxes go with it."""
+        self._org_timer.stop()
+        self._drop_managed_accounts(set(a.email.lower() for a in
+                                        self.db.list_accounts()
+                                        if org.is_managed(a.email)))
+        org.leave()
+
+    def _org_tick(self):
+        if self._org_busy or not org.is_joined():
+            return
+        if self._org_failed_last:
+            self._enforce_org_lease()
+        self._org_busy = True
+        snapshot = []
+        for a in self.db.list_accounts():
+            managed = org.is_managed(a.email)
+            snapshot.append({
+                "email": a.email.lower(), "managed": managed,
+                "version": org.held_version(a.email) if managed else 0,
+                "status": self._account_status(a),
+                "error": ("Sign-in failed" if a.id in self.engine.auth_failed
+                          else "")})
+        from .. import __version__
+
+        def work():
+            resp = None
+            try:
+                resp = org.checkin(snapshot, __version__)
+            finally:
+                self._org_failed_last = resp is None
+                self._org_busy = False
+            if resp is not None and not self._shutdown_done:
+                try:
+                    self._org_applied.emit(resp)
+                except RuntimeError:
+                    pass   # window torn down between the check and the emit
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _enforce_org_lease(self) -> None:
+        """Too long without reaching the server: stop the managed mailboxes
+        (once) and say why. _apply_org brings them back."""
+        if self._org_lease_paused or not org.lease_expired():
+            return
+        managed = [a for a in self.db.list_accounts() if org.is_managed(a.email)]
+        if not managed:
+            return
+        self._org_lease_paused = True
+        for a in managed:
+            self.engine.stop_account(a.id)
+        days = org.lease_seconds() // 86400
+        QMessageBox.warning(
+            self, "Organization",
+            "Your company mailboxes are paused because this PC hasn't reached "
+            f"your organization's server for {days or 'several'} day(s).\n\n"
+            "Connect to the office network (or VPN). They start again by "
+            "themselves as soon as the server is reached.")
+
+    def _resume_after_lease(self) -> None:
+        """The server answered: run every managed mailbox that isn't running
+        (paused by the limit, or skipped at startup while it had run out)."""
+        was_paused, self._org_lease_paused = self._org_lease_paused, False
+        for a in self.db.list_accounts():
+            w = self.engine.workers.get(a.id)
+            if (org.is_managed(a.email) and not a.paused
+                    and not (w and w.isRunning())):
+                self.engine.start_account(a)
+        if was_paused:
+            self.statusBar().showMessage(
+                "Organization server reached: company mailboxes resumed", 8000)
+
+    def _drop_managed_accounts(self, emails: set[str]) -> int:
+        ids = [a.id for a in self.db.list_accounts() if a.email.lower() in emails]
+        if ids:
+            self._remove_accounts(ids)
+        for e in emails:
+            org.forget(e)
+        return len(ids)
+
+    def _apply_org(self, resp: dict):
+        """Make this PC's managed mailboxes match the admin panel's list."""
+        # A question below runs a nested event loop, in which the next
+        # check-in's answer can arrive: handle one answer at a time.
+        if getattr(self, "_org_applying", False):
+            return
+        self._org_applying = True
+        try:
+            self._apply_org_inner(resp)
+        finally:
+            self._org_applying = False
+
+    def _confirm_take_over(self, email: str) -> bool:
+        """The organization wants to manage an account the user added
+        themselves. Only with their say-so: a fake organization could
+        otherwise take over (and redirect) a personal account."""
+        reply = QMessageBox.question(
+            self, "Organization",
+            f"Your organization ({org.server_url()}) wants to manage "
+            f"{email} on this PC.\n\n"
+            "If you allow it, your administrator sets this account's password "
+            "and servers, and can sign it out. Your downloaded email stays.\n\n"
+            "Only allow this if it's your work account and you expected it.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        return reply == QMessageBox.StandardButton.Yes
+
+    def _apply_org_inner(self, resp: dict):
+        try:
+            interval = int(resp.get("interval") or 30)
+            self._org_timer.setInterval(max(10, min(interval, 600)) * 1000)
+        except (TypeError, ValueError):
+            pass
+        st = resp.get("state")
+        if st in ("revoked", "unknown"):
+            n = self._drop_managed_accounts(org.managed_emails())
+            self._org_timer.stop()
+            org.leave()
+            QMessageBox.information(
+                self, "Organization",
+                "This PC has been removed from your organization by the "
+                "administrator."
+                + (f" {n} managed account(s) were signed out." if n else ""))
+            return
+        if st != "approved":
+            return
+        desired = {}
+        for item in resp.get("managed") or []:
+            email = str(item.get("email") or "").lower()
+            if "@" in email:
+                desired[email] = item
+        removed = self._drop_managed_accounts(org.managed_emails() - set(desired))
+        local = {a.email.lower(): a for a in self.db.list_accounts()}
+        added = changed = 0
+        for email, item in desired.items():
+            try:
+                auth = str(item.get("auth") or "password")
+                if auth not in org.APP_PROVIDER:
+                    continue
+                cfg = {"name": str(item.get("name") or "")[:120],
+                       "imap_host": str(item["imap_host"]),
+                       "imap_port": int(item["imap_port"]),
+                       "smtp_host": str(item["smtp_host"]),
+                       "smtp_port": int(item["smtp_port"]),
+                       "auth": auth,
+                       "oauth_client": item.get("oauth_client") or {}}
+                version = int(item["version"])
+                servers = org.server_tag(cfg["imap_host"], cfg["imap_port"],
+                                         cfg["smtp_host"], cfg["smtp_port"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            box = item.get("secret")
+            fresh = False
+            personal = local.get(email) is not None and not org.is_managed(email)
+            if personal and box:
+                if email in org.declined():
+                    continue
+                if not self._confirm_take_over(email):
+                    org.set_declined(email, True)
+                    continue
+            if box:
+                if not org.validate_box(email, version, box, servers):
+                    log.warning("org: ignoring a password for %s this PC "
+                                "can't open", email)
+                    continue
+                org.store_grant(email, version, box, cfg)
+                fresh = True
+            if not org.is_managed(email):
+                continue        # no password yet; it comes with the next answer
+            acc = local.get(email)
+            if acc is None:
+                new = Account(id=None, name=cfg["name"] or email.split("@")[0],
+                              email=email, provider=org.APP_PROVIDER[cfg["auth"]],
+                              imap_host=cfg["imap_host"],
+                              imap_port=cfg["imap_port"],
+                              smtp_host=cfg["smtp_host"],
+                              smtp_port=cfg["smtp_port"], color="")
+                try:
+                    new.id = self.db.add_account(new)
+                except sqlite3.IntegrityError:
+                    continue
+                self.engine.start_account(new)
+                added += 1
+            elif fresh:
+                # New password or server settings (or a personal account the
+                # admin now manages): apply and reconnect.
+                self.db.update_account(
+                    acc.id, imap_host=cfg["imap_host"],
+                    imap_port=cfg["imap_port"], smtp_host=cfg["smtp_host"],
+                    smtp_port=cfg["smtp_port"],
+                    **({"name": cfg["name"]} if cfg["name"] else {}))
+                # Password <-> Google / Microsoft sign-in decides which login
+                # code the mail engine uses.
+                self.db.set_account_provider(acc.id, org.APP_PROVIDER[cfg["auth"]])
+                # A password the user typed before is no longer needed.
+                credentials.delete_stored_password(email)
+                self.engine.stop_account(acc.id)
+                fresh_acc = next((a for a in self.db.list_accounts()
+                                  if a.id == acc.id), None)
+                if fresh_acc is not None and not fresh_acc.paused:
+                    self.engine.start_account(fresh_acc)
+                changed += 1
+        # Resume only after the list is applied, so a mailbox that was just
+        # signed out isn't started and then torn down again in one go.
+        self._resume_after_lease()
+        if added or changed:
+            self.sidebar.refresh()
+            self._rebuild_tabs()
+        parts = [f"{n} {w}" for n, w in ((added, "signed in"),
+                                          (changed, "updated"),
+                                          (removed, "signed out")) if n]
+        if parts:
+            self.statusBar().showMessage(
+                "Organization: " + ", ".join(parts), 8000)
 
     def _remove_accounts(self, acc_ids: list[int]):
         """Stop each account's worker and delete all its data. Shared by the

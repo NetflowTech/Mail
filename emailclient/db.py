@@ -368,6 +368,14 @@ class Database:
         d["notify_enabled"] = bool(d["notify_enabled"])
         return Account(**d)
 
+    def set_account_provider(self, account_id: int, provider: str) -> None:
+        """How the account signs in (organization-managed mailboxes switch
+        between a password and a Google / Microsoft sign-in)."""
+        with self._lock:
+            self.conn.execute("UPDATE accounts SET provider=? WHERE id=?",
+                              (provider, account_id))
+            self.conn.commit()
+
     def update_account(self, account_id: int, name: str | None = None,
                        signature: str | None = None,
                        signature_image: str | None = None,

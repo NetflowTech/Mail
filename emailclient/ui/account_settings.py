@@ -468,7 +468,18 @@ class AccountSettingsDialog(QDialog):
         layout.addSpacing(8)
 
         self.pw_edit = None
-        if acc.provider == "outlook":
+        from .. import org
+        if org.is_managed(acc.email):
+            # The admin panel owns this mailbox's server settings and password:
+            # a different server here would be handed the password at login.
+            for w in (self.imap_host_edit, self.imap_port_edit,
+                      self.smtp_host_edit, self.smtp_port_edit):
+                w.setReadOnly(True)
+                w.setEnabled(False)
+            pw_guide = QLabel("🏢 Managed by your organization. Your administrator "
+                              "signs this account in and out and sets its "
+                              "password and servers.")
+        elif acc.provider == "outlook":
             # Microsoft servers are fixed — show them but don't allow edits.
             for w in (self.imap_host_edit, self.imap_port_edit,
                       self.smtp_host_edit, self.smtp_port_edit):

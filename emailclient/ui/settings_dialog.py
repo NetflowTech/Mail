@@ -168,6 +168,8 @@ class SettingsDialog(QDialog):
                          "💾 Backup")
         self.tabs.addTab(self._scrollable(self._build_license_tab()),
                          "🔑 License")
+        self.tabs.addTab(self._scrollable(self._build_org_tab()),
+                         "🏢 Organization")
         self.tabs.addTab(self._scrollable(self._build_feedback_tab()),
                          "💬 Feedback")
         # Security tab is HIDDEN by default (admin-only). Reveal it with a
@@ -188,6 +190,121 @@ class SettingsDialog(QDialog):
         self._update_states()
 
     # -- tab builders --
+    def _build_org_tab(self) -> QWidget:
+        """Join the organization's AMail admin server with the setup code the
+        administrator copies from the admin panel; see who manages this PC."""
+        page, lay = self._new_page()
+        lay.addWidget(self._heading("🏢 Organization"))
+        lay.addWidget(self._guide(
+            "Your administrator can sign this PC in to company mailboxes and "
+            "sign it out again. You use those mailboxes as normal, but their "
+            "passwords are never shown to you."))
+        self.org_status = QLabel()
+        self.org_status.setWordWrap(True)
+        self.org_status.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        lay.addWidget(self.org_status)
+
+        self.org_join_box = QWidget()
+        jl = QVBoxLayout(self.org_join_box)
+        jl.setContentsMargins(0, 6, 0, 0)
+        jl.addWidget(QLabel("Setup code from your administrator:"))
+        self.org_code = QPlainTextEdit()
+        self.org_code.setPlaceholderText("AMAIL1.…")
+        self.org_code.setFixedHeight(80)
+        jl.addWidget(self.org_code)
+        join_btn = QPushButton("Connect")
+        join_btn.setObjectName("primary")
+        join_btn.clicked.connect(self._org_join)
+        jl.addWidget(join_btn, 0, Qt.AlignmentFlag.AlignLeft)
+        lay.addWidget(self.org_join_box)
+
+        self.org_leave_btn = QPushButton("Leave organization")
+        self.org_leave_btn.clicked.connect(self._org_leave)
+        lay.addWidget(self.org_leave_btn, 0, Qt.AlignmentFlag.AlignLeft)
+        lay.addStretch(1)
+        self._org_refresh()
+        return page
+
+    def _org_refresh(self) -> None:
+        from .. import org
+        st = org.state()
+        managed = sorted(org.managed_emails())
+        if not st:
+            text = "This PC isn't connected to an organization."
+        elif st == "pending":
+            text = (f"Connected to {org.server_url()}.\n\nWaiting for your "
+                    "administrator to approve this PC in the admin panel. "
+                    "They will ask for this PC's check code:\n\n"
+                    f"    {org.check_code()}")
+        else:
+            text = f"Connected to {org.server_url()}."
+            text += ("\n\nManaged mailboxes on this PC:\n  " + "\n  ".join(managed)
+                     if managed else "\n\nNo managed mailboxes on this PC yet.")
+        self.org_status.setText(text)
+        self.org_join_box.setVisible(not st)
+        self.org_leave_btn.setVisible(bool(st))
+
+    def _org_join(self) -> None:
+        from .. import org
+        code = self.org_code.toPlainText()
+        try:
+            info = org.parse_setup_code(code)
+        except org.OrgError as e:
+            QMessageBox.warning(self, "Organization", str(e))
+            return
+        # Say exactly what joining means, and where to: a setup code from
+        # anyone but your own administrator is a way to take over this PC's
+        # mail settings.
+        if QMessageBox.question(
+                self, "Connect to organization",
+                f"Connect this PC to the organization server at\n\n"
+                f"    {info['url']}\n\n"
+                "Its administrator will see which email accounts are on this "
+                "PC, and can add company mailboxes to it and remove them.\n\n"
+                "Only continue if this code came from your own company's "
+                "administrator.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            org.enroll(code)
+        except org.OrgError as e:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "Organization", str(e))
+            return
+        QApplication.restoreOverrideCursor()
+        self.org_code.clear()
+        self._org_refresh()
+        main = self.parent()
+        if hasattr(main, "org_joined"):
+            main.org_joined()
+        QMessageBox.information(
+            self, "Organization",
+            "This PC is now waiting for your administrator to approve it. "
+            f"Give them this check code when they ask: {org.check_code()}\n\n"
+            "Mailboxes they assign will appear on their own.")
+
+    def _org_leave(self) -> None:
+        from .. import org
+        n = len(org.managed_emails())
+        msg = "Disconnect this PC from your organization?"
+        if n:
+            msg += (f"\n\nThe {n} mailbox(es) your administrator manages will be "
+                    "removed from this PC, with their downloaded emails.")
+        if QMessageBox.question(
+                self, "Leave organization", msg,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
+        main = self.parent()
+        if hasattr(main, "org_left"):
+            main.org_left()
+        else:
+            org.leave()
+        self._org_refresh()
+
     def _build_notifications_tab(self) -> QWidget:
         page, lay = self._new_page()
 

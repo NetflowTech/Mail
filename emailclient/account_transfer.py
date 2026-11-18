@@ -111,8 +111,12 @@ def unseal(blob: bytes, passphrase: str) -> bytes:
 def export_accounts(db, passphrase: str) -> bytes:
     """Return an encrypted blob of all accounts/groups/credentials."""
     groups = {g["id"]: g for g in db.list_groups()}
+    from . import org
     accts = []
     for a in db.list_accounts():
+        if org.is_managed(a.email):
+            # The organization's password never leaves this PC in a file.
+            continue
         g = groups.get(a.group_id)
         accts.append({
             "name": a.name, "email": a.email, "provider": a.provider,

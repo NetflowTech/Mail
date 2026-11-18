@@ -119,19 +119,19 @@ def send(account, msg: EmailMessage, all_rcpts: list[str]) -> None:
 
     try:
         if account.provider == "outlook":
-            token = oauth.get_token(account.email)
+            token = oauth.get_token(account.email, account)
             if token is None:
                 raise RuntimeError("microsoft re-login required")
             authstr = f"user={account.email}\x01auth=Bearer {token}\x01\x01"
             smtp.auth("XOAUTH2", lambda challenge=None: authstr)
         elif account.provider == "gmail" and google_oauth.has_login(account.email):
-            token = google_oauth.get_token(account.email)
+            token = google_oauth.get_token(account.email, account)
             if token is None:
                 raise RuntimeError("google re-login required")
             authstr = f"user={account.email}\x01auth=Bearer {token}\x01\x01"
             smtp.auth("XOAUTH2", lambda challenge=None: authstr)
         else:
-            password = credentials.get_password(account.email) or ""
+            password = credentials.password_for_account(account) or ""
             smtp.login(account.email, password)
 
         smtp.send_message(msg, from_addr=account.email, to_addrs=all_rcpts)

@@ -47,25 +47,36 @@ def _explain(exc: Exception) -> str:
 def _oauth_token(account) -> str | None:
     """The XOAUTH2 token for a browser-signed-in account, else None."""
     if account.provider == "outlook":
-        return oauth.get_token(account.email)
+        return oauth.get_token(account.email, account)
     if account.provider == "gmail" and google_oauth.has_login(account.email):
-        return google_oauth.get_token(account.email)
+        return google_oauth.get_token(account.email, account)
     return None
 
 
-def _credentials(account, password: str | None):
+def _credentials(account, password: str | None, host: str = "",
+                 port: int = 0, smtp: bool = False):
     """(token, password) to try. Resolved BEFORE opening a socket — with
-    nothing to log in with, connecting first would just stall on a timeout."""
+    nothing to log in with, connecting first would just stall on a timeout.
+    A managed mailbox's password is only used with the servers the
+    administrator set for it."""
     token = _oauth_token(account)
     if token:
         return token, None
+    from . import org
+    if org.is_managed(account.email):
+        mine = ((account.smtp_host, account.smtp_port) if smtp
+                else (account.imap_host, account.imap_port))
+        if (str(host).strip().lower(), int(port)) != (str(mine[0]).strip().lower(),
+                                                       int(mine[1])):
+            return None, ""
+        return None, credentials.password_for_account(account) or ""
     return None, (password or credentials.get_password(account.email) or "")
 
 
 def check_imap(account, host: str, port: int,
                password: str | None = None) -> tuple[bool, str]:
     """Log in to IMAP exactly like the sync worker does. (ok, message)."""
-    token, pw = _credentials(account, password)
+    token, pw = _credentials(account, password, host, port)
     if not token and not pw:
         return False, "No password saved for this account yet."
     client = None
@@ -94,7 +105,7 @@ def check_imap(account, host: str, port: int,
 def check_smtp(account, host: str, port: int,
                password: str | None = None) -> tuple[bool, str]:
     """Log in to SMTP exactly like the sender does — no mail is sent."""
-    token, pw = _credentials(account, password)
+    token, pw = _credentials(account, password, host, port, smtp=True)
     if not token and not pw:
         return False, "No password saved for this account yet."
     smtp = None
