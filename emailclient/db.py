@@ -109,6 +109,10 @@ class Database:
         # WAL mode allows readers to proceed concurrently with the writer.
         self.conn = sqlite3.connect(str(path), check_same_thread=False)
         self._lock = threading.Lock()
+        # Accounts deleted while this process runs. A sync worker can still be
+        # finishing a folder after its account is removed; its late writes are
+        # dropped instead of leaving rows that a later account would inherit.
+        self._gone: set[int] = set()
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(SCHEMA)
@@ -175,6 +179,52 @@ class Database:
         self._migrate_attachment_inline()
         self._migrate_sent_read()
         self._migrate_dedupe_sent()
+        self._purge_orphans()
+        # Enforce messages → accounts now that no orphan rows remain.
+        self.conn.execute("PRAGMA foreign_keys=ON")
+
+    # Tables holding per-account rows, cleaned when an account goes away.
+    _ACCOUNT_TABLES = ("messages", "pending_ops", "outbox", "folder_state",
+                       "account_folders", "folder_rules")
+
+    def _purge_orphans(self) -> None:
+        """Delete rows whose account no longer exists. Removing an account used
+        to race its sync worker, which could save mail after the delete; those
+        rows were invisible but a new account given the same id inherited them,
+        including the "already synced up to" markers that make sync skip mail."""
+        removed = 0
+        for table in self._ACCOUNT_TABLES:
+            cur = self.conn.execute(
+                f"DELETE FROM {table}"
+                " WHERE account_id NOT IN (SELECT id FROM accounts)")
+            removed += cur.rowcount or 0
+        if removed:
+            self.conn.execute(
+                "DELETE FROM notifications WHERE message_id IS NOT NULL"
+                " AND message_id > 0"
+                " AND message_id NOT IN (SELECT id FROM messages)")
+            log.info("removed %d leftover rows of deleted accounts", removed)
+        self.conn.commit()
+
+    def _next_account_id(self) -> int:
+        """An id no account has ever had on this PC, so a new account can never
+        pick up a removed one's data. Caller holds the lock."""
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS app_meta"
+            " (key TEXT PRIMARY KEY, value INTEGER NOT NULL)")
+        row = self.conn.execute(
+            "SELECT value FROM app_meta WHERE key='account_id_high'").fetchone()
+        high = row[0] if row else 0
+        for table in ("accounts",) + self._ACCOUNT_TABLES:
+            col = "id" if table == "accounts" else "account_id"
+            r = self.conn.execute(f"SELECT COALESCE(MAX({col}), 0) FROM {table}").fetchone()
+            high = max(high, r[0] or 0)
+        high = max(high, max(self._gone, default=0))
+        new_id = high + 1
+        self.conn.execute(
+            "INSERT INTO app_meta (key, value) VALUES ('account_id_high', ?)"
+            " ON CONFLICT(key) DO UPDATE SET value=excluded.value", (new_id,))
+        return new_id
 
     def _migrate_account_colors(self) -> None:
         """One-time: clear the loud per-provider colors that used to be assigned
@@ -313,23 +363,29 @@ class Database:
         with self._lock:
             added_at = (a.added_at or datetime.now(timezone.utc)
                         .replace(microsecond=0).isoformat())
+            new_id = self._next_account_id()
             cur = self.conn.execute(
-                "INSERT INTO accounts (name, email, provider, imap_host, imap_port,"
+                "INSERT INTO accounts (id, name, email, provider, imap_host, imap_port,"
                 " smtp_host, smtp_port, color, sync_depth, added_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (a.name, a.email, a.provider, a.imap_host, a.imap_port,
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (new_id, a.name, a.email, a.provider, a.imap_host, a.imap_port,
                  a.smtp_host, a.smtp_port, a.color, a.sync_depth or "50", added_at))
             self.conn.commit()
             return cur.lastrowid
 
     def delete_account(self, account_id: int) -> None:
         with self._lock:
+            self._gone.add(account_id)
+            for table in self._ACCOUNT_TABLES:
+                self.conn.execute(f"DELETE FROM {table} WHERE account_id=?",
+                                  (account_id,))
             self.conn.execute("DELETE FROM accounts WHERE id=?", (account_id,))
             self.conn.commit()
 
     def delete_account_cascade(self, account_id: int) -> None:
         """Delete all data for account_id: messages, pending_ops, outbox, then the account."""
         with self._lock:
+            self._gone.add(account_id)
             self.conn.execute("DELETE FROM messages WHERE account_id=?", (account_id,))
             self.conn.execute("DELETE FROM pending_ops WHERE account_id=?", (account_id,))
             self.conn.execute("DELETE FROM outbox WHERE account_id=?", (account_id,))
@@ -484,6 +540,8 @@ class Database:
         server copy wins over the local one, since only it can be acted on.
         """
         with self._lock:
+            if m.account_id in self._gone:
+                return False   # account removed while its worker was busy
             if m.message_id:
                 twin = self.conn.execute(
                     "SELECT id, uid, attachments FROM messages"
@@ -682,6 +740,8 @@ class Database:
         if not name:
             return
         with self._lock:
+            if account_id in self._gone:
+                return
             self.conn.execute(
                 "INSERT OR IGNORE INTO account_folders (account_id, name) VALUES (?,?)",
                 (account_id, name))
@@ -763,6 +823,8 @@ class Database:
     def set_folder_state(self, account_id: int, folder: str,
                          uidvalidity: int, last_seen_uid: int) -> None:
         with self._lock:
+            if account_id in self._gone:
+                return
             # UPSERT (not INSERT OR REPLACE) so backfill_done survives watermark updates
             self.conn.execute(
                 "INSERT INTO folder_state"
@@ -789,6 +851,8 @@ class Database:
     def set_backfill_done(self, account_id: int, folder: str, done: bool = True) -> None:
         """Set the backfill flag, creating the folder_state row if absent."""
         with self._lock:
+            if account_id in self._gone:
+                return
             self.conn.execute(
                 "INSERT OR IGNORE INTO folder_state (account_id, folder) VALUES (?,?)",
                 (account_id, folder))
@@ -1157,6 +1221,8 @@ class Database:
     def add_op(self, account_id: int, op: str, folder: str, uid: int,
                target: str = "") -> None:
         with self._lock:
+            if account_id in self._gone:
+                return
             self.conn.execute(
                 "INSERT INTO pending_ops (account_id, op, folder, uid, target)"
                 " VALUES (?,?,?,?,?)",

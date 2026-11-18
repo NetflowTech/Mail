@@ -12,6 +12,8 @@ Thunderbird ships these same values in its public source tree).
 """
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import logging
 import secrets
@@ -53,7 +55,17 @@ def _refresh_key(email: str) -> str:
     return f"google-refresh:{email}"
 
 
-def _auth_url(email: str, port: int, state: str) -> str:
+def _pkce_pair() -> tuple[str, str]:
+    """(code_verifier, code_challenge) for PKCE (RFC 7636, S256). The browser
+    only ever sees the challenge; the code it returns is useless without the
+    verifier, which never leaves this process."""
+    verifier = secrets.token_urlsafe(64)
+    challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode("ascii")).digest()).rstrip(b"=").decode()
+    return verifier, challenge
+
+
+def _auth_url(email: str, port: int, state: str, challenge: str = "") -> str:
     """Build the Google consent-screen URL (pure function, unit-tested)."""
     params = {
         "client_id": CLIENT_ID,
@@ -65,6 +77,9 @@ def _auth_url(email: str, port: int, state: str) -> str:
         "login_hint": email,
         "state": state,
     }
+    if challenge:
+        params["code_challenge"] = challenge
+        params["code_challenge_method"] = "S256"
     return AUTH_ENDPOINT + "?" + urllib.parse.urlencode(params)
 
 
@@ -97,15 +112,19 @@ def _cache_access(email: str, payload: dict) -> str:
     return token
 
 
-def _exchange_code(email: str, code: str, redirect_uri: str) -> str:
+def _exchange_code(email: str, code: str, redirect_uri: str,
+                   verifier: str = "") -> str:
     """Exchange an authorization code; store refresh token; return access token."""
-    payload = _post_token({
+    form = {
         "grant_type": "authorization_code",
         "code": code,
         "client_id": CLIENT_ID,
         "client_secret": CLIENT_SECRET,
         "redirect_uri": redirect_uri,
-    })
+    }
+    if verifier:
+        form["code_verifier"] = verifier
+    payload = _post_token(form)
     if "access_token" not in payload:
         raise RuntimeError(payload.get("error_description")
                            or payload.get("error", "Google login failed"))
@@ -118,17 +137,25 @@ def _exchange_code(email: str, code: str, redirect_uri: str) -> str:
 def login_interactive(email: str) -> str:
     """Open the browser for Google login; return access token.
 
-    Serves exactly one loopback request in the calling thread, with a
-    socket-timeout loop bounded at LOGIN_TIMEOUT_SECONDS.
+    Serves loopback requests in the calling thread until one carries this
+    sign-in's state (anything else, such as a port scan or a stray browser
+    request, gets a 404 and the wait goes on), bounded at
+    LOGIN_TIMEOUT_SECONDS.
     """
     state = secrets.token_urlsafe(24)
+    verifier, challenge = _pkce_pair()
     result: dict[str, str] = {}
 
     class _Handler(BaseHTTPRequestHandler):
         def do_GET(self):  # noqa: N802 (http.server API)
             query = urllib.parse.urlparse(self.path).query
-            result.update({k: v[0] for k, v in
-                           urllib.parse.parse_qs(query).items()})
+            params = {k: v[0] for k, v in urllib.parse.parse_qs(query).items()}
+            if result or not secrets.compare_digest(
+                    params.get("state", "").encode(), state.encode()):
+                self.send_response(404)
+                self.end_headers()
+                return
+            result.update(params)
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
@@ -142,7 +169,7 @@ def login_interactive(email: str) -> str:
     port = server.server_address[1]
     redirect_uri = f"http://127.0.0.1:{port}"
     try:
-        webbrowser.open(_auth_url(email, port, state))
+        webbrowser.open(_auth_url(email, port, state, challenge))
         deadline = time.time() + LOGIN_TIMEOUT_SECONDS
         while not result:
             if time.time() > deadline:
@@ -158,7 +185,7 @@ def login_interactive(email: str) -> str:
     code = result.get("code")
     if not code:
         raise RuntimeError("Google login failed: no authorization code returned")
-    return _exchange_code(email, code, redirect_uri)
+    return _exchange_code(email, code, redirect_uri, verifier)
 
 
 def get_token(email: str) -> str | None:
@@ -189,6 +216,15 @@ def get_token(email: str) -> str | None:
                   payload.get("error_description") or payload.get("error"))
         return None
     return _cache_access(email, payload)
+
+
+def forget(email: str) -> None:
+    """Delete the stored Google sign-in for *email* (account removed)."""
+    _token_cache.pop(email, None)
+    try:
+        keyring.delete_password(APP_NAME, _refresh_key(email))
+    except Exception:
+        pass
 
 
 def has_login(email: str) -> bool:

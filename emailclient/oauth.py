@@ -53,3 +53,14 @@ def get_token(email: str) -> str | None:
     result = app.acquire_token_silent(SCOPES, account=accounts[0])
     _save_cache(cache)
     return result.get("access_token") if result else None
+
+
+def forget(email: str) -> None:
+    """Remove *email*'s Microsoft sign-in from the shared token cache (account
+    removed). Other Microsoft accounts on this PC keep theirs."""
+    cache = _load_cache()
+    app = _app(cache)
+    for a in app.get_accounts():
+        if a.get("username", "").lower() == email.lower():
+            app.remove_account(a)
+    _save_cache(cache)

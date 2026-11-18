@@ -101,7 +101,8 @@ def _display_sender(raw: str) -> str:
         name, addr = parseaddr(raw)
     except (RecursionError, ValueError, IndexError):
         return raw
-    return name or addr or raw
+    from ..sender_name import safe_display_name
+    return safe_display_name(name, addr) or raw
 
 
 def _initial(name: str) -> str:

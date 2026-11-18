@@ -5,7 +5,11 @@
 ; Fully offline — no download URLs, no update endpoints, no telemetry.
 
 #define AppName    "AMail"
-#define AppVersion "2.0.13"
+; The release build passes the version from the git tag (ISCC /DAppVersion=…);
+; this value is only for a build made by hand.
+#ifndef AppVersion
+  #define AppVersion "2.0.13"
+#endif
 #define AppExe     "AMail.exe"
 #define SourceDir  "dist\AMail"
 

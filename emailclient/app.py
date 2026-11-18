@@ -126,6 +126,31 @@ def _show_window(window: MainWindow) -> None:
     window.activateWindow()
 
 
+def _collect_garbage_on_gui_thread(app) -> None:
+    """Run Python's cycle collector on the GUI thread only.
+
+    Left alone, it runs on whichever thread happens to allocate when its
+    counters fill up: a sync worker or a check-in thread. If a closed dialog is
+    waiting in a reference cycle, that thread then destroys Qt widgets while
+    the GUI thread is using them, and the two deadlock (AMail freezes with
+    0% CPU). Here a GUI-thread timer runs the same collections instead."""
+    import gc
+    from PySide6.QtCore import QTimer
+    gc.disable()
+    t0, t1, t2 = gc.get_threshold()
+
+    def collect():
+        c0, c1, c2 = gc.get_count()
+        if c0 > t0:
+            gc.collect(2 if c2 > t2 else 1 if c1 > t1 else 0)
+
+    timer = QTimer(app)
+    timer.setInterval(500)
+    timer.timeout.connect(collect)
+    timer.start()
+    app._gc_timer = timer
+
+
 def main():
     # Install crash/exception logging FIRST so anything that dies during startup
     # still leaves a diagnosable trail (local log + best-effort server upload).
@@ -133,6 +158,12 @@ def main():
     crashlog.install()
     _raise_fd_limit()  # 100+ IMAP connections need more than macOS's 256 fds
     app = QApplication(sys.argv)
+    _collect_garbage_on_gui_thread(app)
+    try:   # email copies a crash left behind (reader pages, print PDFs)
+        from . import temp_files
+        temp_files.clean_leftovers()
+    except Exception:
+        pass
     crashlog.start_hang_watchdog()  # report a frozen UI (hangs throw no exception)
     app.setApplicationName("AMail")
     app.setStyle("Fusion")  # consistent QSS rendering across platforms

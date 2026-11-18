@@ -1,13 +1,35 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 APP_NAME = "AMail"
 
+_private_checked: set[str] = set()
+
+
+def _make_private(d: Path) -> None:
+    """Owner-only access (0700) on Mac/Linux: the folder holds every email in
+    plain SQLite, and the default umask leaves it readable by other users of
+    the computer. Windows already keeps a user's home folder private.
+    Checked once per process; a folder that can't be changed is left as is."""
+    key = str(d)
+    if key in _private_checked:
+        return
+    _private_checked.add(key)
+    if os.name == "nt":
+        return
+    try:
+        if d.stat().st_mode & 0o077:
+            os.chmod(d, 0o700)
+    except OSError:
+        pass
+
 
 def data_dir() -> Path:
     d = Path.home() / ".amail"
-    d.mkdir(parents=True, exist_ok=True)
+    d.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _make_private(d)
     return d
 
 

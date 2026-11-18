@@ -24,6 +24,11 @@ class SyncEngine(QObject):
         # restart these (it would just fail again); a password fix / re-login
         # clears the flag via start_account.
         self.auth_failed: set[int] = set()
+        # Stopped workers that hadn't finished yet (busy connecting, or getting
+        # a sign-in token). Held here until they do: dropping the last
+        # reference to a running QThread aborts the whole app ("QThread:
+        # Destroyed while thread is still running").
+        self._stopping: set = set()
 
     # Delay between successive worker launches in start_all. Launching 50+
     # TLS handshakes simultaneously hammers the network and CPU; staggering
@@ -91,7 +96,12 @@ class SyncEngine(QObject):
         worker = self.workers.pop(account_id, None)
         if worker:
             worker.stop()
-            worker.wait(3000)
+            if not worker.wait(3000):
+                # Still busy (a network call that stop() can't interrupt):
+                # keep it alive until it notices _stop and returns.
+                self._stopping.add(worker)
+                worker.finished.connect(
+                    lambda w=worker: self._stopping.discard(w))
 
     def stop_all(self):
         """Stop every worker fast. Workers blocked in a 30s IMAP IDLE call

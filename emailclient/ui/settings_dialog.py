@@ -1137,7 +1137,14 @@ class SettingsDialog(QDialog):
             return
         try:
             with _busy(), open(path, "w", newline="", encoding="utf-8-sig") as fh:
-                w = csv.writer(fh)
+                from ..xlsx import csv_safe
+                raw = csv.writer(fh)
+
+                class _Safe:
+                    @staticmethod
+                    def writerow(row):
+                        raw.writerow([csv_safe(v) for v in row])
+                w = _Safe()
                 w.writerow(["#", "Account", "Display name", "Group", "Status",
                             "Installed on PC(s)", "# PCs", "Local IP(s)",
                             "Public IP(s)"])

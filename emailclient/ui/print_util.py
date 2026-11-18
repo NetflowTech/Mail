@@ -506,7 +506,11 @@ def show_email_preview(parent, webview, title: str = "Print email") -> None:
     what "the print button does nothing" looks like.
     """
     from ..config import data_dir
+    from .. import temp_files
     path = str(data_dir() / f"print_{uuid.uuid4().hex}.pdf")
+    # Kept until the preview closes, or until AMail quits when the user's PDF
+    # app has it open.
+    temp_files.track(path)
 
     def done(ok_path, ok):
         try:
@@ -518,6 +522,9 @@ def show_email_preview(parent, webview, title: str = "Print email") -> None:
                                 "Could not prepare this email for printing.")
             return
         if show_pdf_preview(parent, ok_path, title):
+            # The preview window is closed (it runs modally): the PDF, a copy
+            # of the email, is no longer needed.
+            temp_files.remove(ok_path)
             return
         # No PDF viewer component in this build — hand the file to the OS so the
         # user can still print it from their normal PDF app.

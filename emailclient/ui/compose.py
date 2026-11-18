@@ -113,33 +113,11 @@ def make_forward_body(original: EmailMessage, date_str: str) -> str:
             f"{original.body_text or ''}")
 
 
-# Strip the genuinely dangerous bits from an untrusted email before re-embedding
-# it in a reply/forward (and re-sending it). The compose editor is a QTextEdit
-# (no JS engine), but the quoted HTML also goes back out to the recipient, so we
-# remove script/style/iframe/etc., inline event handlers and javascript: URLs
-# while keeping ordinary formatting. Denylist + Qt's non-scriptable renderer; no
-# extra dependency (the reader already renders mail with JavaScript disabled).
-_UNSAFE_BLOCK = re.compile(
-    r"<\s*(script|style|iframe|object|embed|form|svg|math)\b[^>]*>.*?"
-    r"<\s*/\s*\1\s*>", re.IGNORECASE | re.DOTALL)
-_UNSAFE_VOID = re.compile(
-    r"<\s*/?\s*(script|style|iframe|object|embed|link|meta|base|form|svg|math)"
-    r"\b[^>]*>", re.IGNORECASE)
-_EVENT_ATTR = re.compile(
-    r"""\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)""", re.IGNORECASE)
-_JS_URL = re.compile(
-    r"""((?:href|src|action)\s*=\s*)("|')\s*javascript:[^"']*\2""",
-    re.IGNORECASE)
-
-
 def sanitize_email_html(raw: str) -> str:
-    """Remove scripts/handlers/dangerous tags from untrusted email HTML, keeping
-    ordinary formatting. Not a full sanitizer, but the renderer runs no JS."""
-    s = _UNSAFE_BLOCK.sub("", raw)
-    s = _UNSAFE_VOID.sub("", s)
-    s = _EVENT_ATTR.sub("", s)
-    s = _JS_URL.sub(r"\1\2#\2", s)
-    return s
+    """Untrusted email HTML made safe to quote in a reply/forward, which goes
+    back out to the recipients: see html_sanitize."""
+    from ..html_sanitize import sanitize
+    return sanitize(raw)
 
 
 _STYLE_ATTR = re.compile(r"""\sstyle\s*=\s*("[^"]*"|'[^']*')""", re.IGNORECASE)
