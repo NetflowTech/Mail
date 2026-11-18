@@ -6,12 +6,10 @@ tokens (which normally live only in the OS keychain), plus the Microsoft token
 cache. Emails are NOT included — they re-sync from the servers after import.
 
 Because it contains every password, the file is encrypted with a user
-passphrase. To stay dependency-free (the ``cryptography`` package ships an
-unsigned Rust DLL that some endpoint-security suites — e.g. ESET — block), the
-encryption is built entirely on the Python standard library: keys are derived
-with PBKDF2-HMAC-SHA256 (``hashlib``), and the payload is sealed with an
-encrypt-then-MAC scheme using an HMAC-SHA256 keystream plus an HMAC-SHA256
-authentication tag.
+passphrase: the key is derived with PBKDF2-HMAC-SHA256 and the payload is
+sealed with AES-256-GCM (``cryptography``, already bundled for Microsoft
+sign-in). Files from earlier versions, sealed with the previous standard-
+library scheme (HMAC-SHA256 keystream, encrypt-then-MAC), still import.
 """
 from __future__ import annotations
 
@@ -27,11 +25,11 @@ from . import credentials, fleet, google_oauth, oauth
 from .config import APP_NAME
 from .models import Account
 
-# OSMACCT3 = stdlib crypto with the PBKDF2 round count stored in the file, so
-# the count can be raised again later without breaking older backups.
-# OSMACCT2 files (fixed 200,000 rounds) still import. Older OSMACCT1 Fernet
-# files are no longer readable.
-MAGIC = b"OSMACCT3"
+# OSMACCT4 = AES-256-GCM, PBKDF2 round count stored in the file.
+# OSMACCT3 (stdlib keystream + HMAC, round count stored) and OSMACCT2 (same,
+# fixed 200,000 rounds) still import. OSMACCT1 Fernet files no longer do.
+MAGIC = b"OSMACCT4"
+_V3_MAGIC = b"OSMACCT3"
 _LEGACY_MAGIC = b"OSMACCT2"
 _LEGACY_ITERS = 200_000
 # OWASP's current minimum for PBKDF2-HMAC-SHA256.
@@ -82,18 +80,56 @@ def _decrypt(passphrase: str, salt: bytes, body: bytes,
     return bytes(c ^ k for c, k in zip(ciphertext, ks))
 
 
+def _aesgcm(key: bytes):
+    """AES-256-GCM, with a clear message if the library can't be loaded (for
+    example when security software blocks its DLL)."""
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    except (ImportError, OSError) as exc:
+        raise RuntimeError(
+            "AMail couldn't load its encryption component, so the accounts "
+            "file can't be written or read on this PC. If security software "
+            "blocked part of AMail, allow AMail's install folder and try "
+            f"again. ({type(exc).__name__}: {exc})") from exc
+    return AESGCM(key)
+
+
+def _gcm_key(passphrase: str, salt: bytes, iters: int) -> bytes:
+    return hashlib.pbkdf2_hmac("sha256", passphrase.encode("utf-8"), salt,
+                               iters, dklen=32)
+
+
 def seal(passphrase: str, raw: bytes) -> bytes:
-    """Wrap *raw* in the current file format: magic, round count, salt, body."""
+    """Wrap *raw* in the current file format: magic, round count, salt, then
+    a 12-byte nonce and the AES-256-GCM ciphertext+tag. The header is
+    authenticated too, so the round count or salt can't be altered."""
     salt = os.urandom(16)
-    return (MAGIC + b"\n" + struct.pack(">I", _PBKDF2_ITERS) + salt
-            + _encrypt(passphrase, salt, raw, _PBKDF2_ITERS))
+    header = MAGIC + b"\n" + struct.pack(">I", _PBKDF2_ITERS) + salt
+    nonce = os.urandom(12)
+    aes = _aesgcm(_gcm_key(passphrase, salt, _PBKDF2_ITERS))
+    return header + nonce + aes.encrypt(nonce, raw, header)
 
 
 def unseal(blob: bytes, passphrase: str) -> bytes:
-    """Inverse of :func:`seal`; also reads the older OSMACCT2 layout.
+    """Inverse of :func:`seal`; also reads the older OSMACCT3/OSMACCT2 files.
     Raises ValueError for a foreign file or a wrong passphrase."""
     if blob.startswith(MAGIC + b"\n"):
         body = blob[len(MAGIC) + 1:]
+        if len(body) < 4 + 16 + 12 + 16:
+            raise ValueError("This account backup file is truncated.")
+        (iters,) = struct.unpack(">I", body[:4])
+        if not 1 <= iters <= _MAX_ITERS:
+            raise ValueError("This account backup file is corrupted.")
+        salt, nonce, sealed = body[4:20], body[20:32], body[32:]
+        header = blob[:len(MAGIC) + 1 + 20]
+        aes = _aesgcm(_gcm_key(passphrase, salt, iters))
+        from cryptography.exceptions import InvalidTag
+        try:
+            return aes.decrypt(nonce, sealed, header)
+        except InvalidTag:
+            raise ValueError("Wrong password (or the file is corrupted).") from None
+    if blob.startswith(_V3_MAGIC + b"\n"):
+        body = blob[len(_V3_MAGIC) + 1:]
         if len(body) < 4 + 16 + 48:
             raise ValueError("This account backup file is truncated.")
         (iters,) = struct.unpack(">I", body[:4])
