@@ -61,3 +61,22 @@ class TestConfig:
                 assert "orostar" not in cfg[key].lower(), (
                     f"{name}.{key} still contains 'orostar'"
                 )
+
+
+@pytest.mark.skipif(__import__("os").name == "nt", reason="POSIX permissions")
+class TestDataDirPrivate:
+    def test_new_folder_is_owner_only(self, tmp_path, monkeypatch):
+        import emailclient.config as cfg
+        monkeypatch.setattr(cfg.Path, "home", classmethod(lambda c: tmp_path))
+        monkeypatch.setattr(cfg, "_private_checked", set())
+        d = cfg.data_dir()
+        assert d.stat().st_mode & 0o777 == 0o700
+
+    def test_existing_open_folder_is_closed(self, tmp_path, monkeypatch):
+        import emailclient.config as cfg
+        (tmp_path / ".amail").mkdir(mode=0o755)
+        (tmp_path / ".amail").chmod(0o755)
+        monkeypatch.setattr(cfg.Path, "home", classmethod(lambda c: tmp_path))
+        monkeypatch.setattr(cfg, "_private_checked", set())
+        d = cfg.data_dir()
+        assert d.stat().st_mode & 0o777 == 0o700

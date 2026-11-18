@@ -15,7 +15,15 @@ def bulk_discard(db, ids: list[int], op: str) -> int:
         if m is None:
             continue
         if m.folder == "TRASH" and op == "delete":
-            # Already in Trash: remove locally only (no server purge yet).
+            # Already in Trash: delete it for good, here and on the server.
+            # The server copy is found by Message-ID, not uid: a mail moved to
+            # Trash here still carries its old folder's uid, which in the
+            # server's Trash can belong to a different email. Without a
+            # Message-ID there's no safe way to find it, so the server copy
+            # stays (and the server empties its Trash on its own schedule).
+            if m.uid > 0 and m.message_id:
+                db.add_op(m.account_id, "purge", "TRASH", m.uid,
+                          target=m.message_id)
             db.delete_message_local(msg_id)
         else:
             # Negative synthetic uids are local-only rows: nothing on server.

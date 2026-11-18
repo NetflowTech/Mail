@@ -225,7 +225,8 @@ def message_header_html(m: EmailMessage, accent: str = "") -> str:
     # (NoneType has no .replace), which used to leave the reader blank. Coerce
     # to "" everywhere.
     name, addr = parseaddr(m.sender or "")
-    display = name or addr or (m.sender or "")
+    from ..sender_name import safe_display_name
+    display = safe_display_name(name, addr) or (m.sender or "")
     initial = next((ch.upper() for ch in display
                     if ch.isalpha() or ch.isdigit()), "?")
     avatar_bg = (f" style=\"background:{html.escape(accent)}\""
@@ -422,6 +423,13 @@ class Reader(QWebEngineView):
         # page another Reader just overwrote — that raced into blank / broken
         # images.
         self._render_id = uuid.uuid4().hex
+        # The page file is a copy of the open email: delete it with the view
+        # (and at quit, via temp_files) instead of leaving it on disk.
+        from .. import temp_files
+        from ..config import data_dir
+        view_file = str(data_dir() / f"reader_view_{self._render_id}.html")
+        temp_files.track(view_file)
+        self.destroyed.connect(lambda *_a, p=view_file: temp_files.remove(p))
         self.clear_view()
 
     def _render(self, html_str: str):

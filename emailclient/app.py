@@ -159,6 +159,11 @@ def main():
     _raise_fd_limit()  # 100+ IMAP connections need more than macOS's 256 fds
     app = QApplication(sys.argv)
     _collect_garbage_on_gui_thread(app)
+    try:   # email copies a crash left behind (reader pages, print PDFs)
+        from . import temp_files
+        temp_files.clean_leftovers()
+    except Exception:
+        pass
     crashlog.start_hang_watchdog()  # report a frozen UI (hangs throw no exception)
     app.setApplicationName("AMail")
     app.setStyle("Fusion")  # consistent QSS rendering across platforms

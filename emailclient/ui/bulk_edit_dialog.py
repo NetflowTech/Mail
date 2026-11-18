@@ -138,8 +138,13 @@ class BulkEditAccountsDialog(QDialog):
             changes["smtp_host"] = host
             changes["smtp_port"] = port
         if self.pw_cb.isChecked():
-            # Strip whitespace (copy-pasted app passwords carry stray/nbsp spaces).
-            pw = "".join(self.pw_edit.text().split())
+            from .. import credentials
+            # Several accounts at once: a Google one gets the app-password
+            # treatment only if every chosen account is on Google.
+            hosts = {a.imap_host for a in self.db.list_accounts()
+                     if a.id in self.account_ids}
+            pw = credentials.clean_password(
+                self.pw_edit.text(), hosts.pop() if len(hosts) == 1 else "")
             if not pw:
                 QMessageBox.warning(self, "Bulk Edit",
                                     "Enter a password, or untick that field.")

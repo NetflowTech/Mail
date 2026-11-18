@@ -29,6 +29,18 @@ jobs:
       # lightweight tag gives empty notes and the app shows its default line.
       # The text is handled only through files and environment variables,
       # never pasted into a script, so a tag message cannot run commands here.
+      # The app reports its version from emailclient/__init__.py. If it doesn't
+      # match the tag, every installed copy would think it's out of date and
+      # offer the same update again forever, so stop before building.
+      - name: Check the app version matches the tag
+        shell: bash
+        run: |
+          app=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' emailclient/__init__.py)
+          if [ "$app" != "${{ steps.ver.outputs.version }}" ]; then
+            echo "::error::emailclient/__init__.py says $app but the tag is ${GITHUB_REF_NAME}. Bump __version__ and tag again."
+            exit 1
+          fi
+
       - name: Read release notes from the tag
         shell: bash
         run: |
@@ -62,7 +74,7 @@ jobs:
         shell: cmd
         run: |
           mkdir installer_output
-          "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+          "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DAppVersion=${{ steps.ver.outputs.version }} installer.iss
 
       - name: Compute SHA256
         id: sha256

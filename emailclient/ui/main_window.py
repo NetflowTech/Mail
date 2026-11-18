@@ -1168,17 +1168,23 @@ class MainWindow(QMainWindow):
         from .undo_toast import UndoSendToast
         ids = list(outbox_ids)
 
-        def _undo():
-            self.undo_send(ids)
-
-        # Replace any previous toast so they don't stack.
+        # One toast at a time. A mail sent while the previous toast is still
+        # counting down keeps its Undo: the new toast covers both, and Undo
+        # recalls whichever of them hasn't gone out yet.
         prev = getattr(self, "_undo_toast", None)
         if prev is not None:
             try:
+                if prev.active:
+                    ids = [i for i in prev.ids if i not in ids] + ids
                 prev.finish()
             except RuntimeError:
                 pass
-        toast = UndoSendToast(seconds, self)
+
+        def _undo():
+            self.undo_send(ids)
+
+        toast = UndoSendToast(seconds, self, count=len(ids))
+        toast.ids = ids
         toast.undo_clicked.connect(_undo)
         self._undo_toast = toast
         toast.start()
@@ -1673,6 +1679,12 @@ class MainWindow(QMainWindow):
             if email:   # also drop any cloud-send creds we uploaded for it
                 threading.Thread(target=lambda e=email: approval.remove_creds(e),
                                  daemon=True).start()
+        # Remove the saved password and Google/Microsoft sign-in of every
+        # address no remaining account uses, so none stays in the keychain.
+        still_used = {a.email.lower() for a in self.db.list_accounts()}
+        for email in {by_id[i] for i in acc_ids if by_id.get(i)}:
+            if email.lower() not in still_used:
+                credentials.forget_account(email)
         self.reader.clear_view()
         self.msg_list.show_view(None, "INBOX")
         self._current_account_id = None
@@ -1752,9 +1764,9 @@ class MainWindow(QMainWindow):
                     self._rebuild_tabs()
                     return
             else:
-                # Strip all whitespace (incl. non-breaking spaces from copy-pasted
-                # Gmail app passwords) — they break IMAP LOGIN with ascii encoding.
-                credentials.set_password(acc.email, "".join(dlg.password.text().split()))
+                # App passwords lose their display spaces; real ones keep them.
+                credentials.set_password(acc.email, credentials.clean_password(
+                    dlg.password.text(), acc.imap_host))
             self.sidebar.refresh()
             self._rebuild_tabs()
             self.engine.start_account(acc)
@@ -1829,8 +1841,8 @@ class MainWindow(QMainWindow):
                 continue
             if group_id is not None:
                 self.db.set_account_group(acc.id, group_id)
-            # Strip all whitespace (incl. non-breaking spaces) like add_account.
-            credentials.set_password(email, "".join(entry["password"].split()))
+            credentials.set_password(email, credentials.clean_password(
+                entry["password"], acc.imap_host))
             self.engine.start_account(acc)
             self._cloud_save_creds(acc)
             ok.append(email)

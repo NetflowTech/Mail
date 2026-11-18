@@ -19,6 +19,29 @@ _NS_PKG_REL = "http://schemas.openxmlformats.org/package/2006/relationships"
 # Characters XML 1.0 forbids even when escaped (control chars except \t \n \r).
 _BAD_XML_CHARS = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
+# A spreadsheet treats text starting with one of these as a formula when it is
+# typed in or read from CSV (=HYPERLINK(...), +cmd|..., @SUM(...)). Exported
+# values come from emails and other PCs, so they are never trusted.
+FORMULA_START = ("=", "+", "-", "@", "\t", "\r", "\n")
+
+# Style index for a text cell that looks like a formula: Excel's "quote prefix"
+# keeps it text even when someone edits the cell and presses Enter, without
+# changing what the cell shows.
+_STYLE_QUOTED = 2
+_STYLE_QUOTED_BOLD = 3
+
+
+def looks_like_formula(value) -> bool:
+    return isinstance(value, str) and value.startswith(FORMULA_START)
+
+
+def csv_safe(value):
+    """A CSV cell that a spreadsheet won't run: text that looks like a formula
+    gets a leading apostrophe (the usual guard; CSV has no cell types)."""
+    if looks_like_formula(value):
+        return "'" + value
+    return value
+
 
 def col_letter(n: int) -> str:
     """1 → A, 26 → Z, 27 → AA."""
@@ -38,6 +61,9 @@ def _cell(ref: str, value, style: int = 0) -> str:
     if isinstance(value, (int, float)):
         return f'<c r="{ref}"{s_attr}><v>{value}</v></c>'
     text = escape(_BAD_XML_CHARS.sub("", str(value)))
+    if looks_like_formula(str(value)):
+        quoted = _STYLE_QUOTED_BOLD if style == 1 else _STYLE_QUOTED
+        s_attr = f' s="{quoted}"'
     return f'<c r="{ref}" t="inlineStr"{s_attr}><is><t xml:space="preserve">{text}</t></is></c>'
 
 
@@ -79,9 +105,11 @@ _STYLES = (
     '<fill><patternFill patternType="gray125"/></fill></fills>'
     '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
     '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-    '<cellXfs count="2">'
+    '<cellXfs count="4">'
     '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
     '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>'
+    '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" quotePrefix="1"/>'
+    '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1" quotePrefix="1"/>'
     '</cellXfs>'
     '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
     '</styleSheet>'

@@ -574,7 +574,8 @@ class AccountSettingsDialog(QDialog):
         if not imap_host or not smtp_host or not imap_port or not smtp_port:
             self.test_result.setText("⚠ Fill in both servers and their ports.")
             return
-        password = self.pw_edit.text() if self.pw_edit is not None else ""
+        password = (credentials.clean_password(self.pw_edit.text(), imap_host)
+                    if self.pw_edit is not None else "")
 
         self.test_btn.setEnabled(False)
         self.test_btn.setText("🔌 Testing…")
@@ -769,9 +770,7 @@ class AccountSettingsDialog(QDialog):
             self.pause_value = new_paused
 
         if self.pw_edit is not None and self.pw_edit.text().strip():
-            # Strip all whitespace (incl. non-breaking spaces from copy-pasted
-            # Gmail app passwords) — they break IMAP LOGIN with ascii encoding.
-            credentials.set_password(self._email,
-                                     "".join(self.pw_edit.text().split()))
+            credentials.set_password(self._email, credentials.clean_password(
+                self.pw_edit.text(), getattr(self, "_orig_conn", ("",))[0]))
             self.password_changed = True
         self.accept()

@@ -421,6 +421,12 @@ class ImapWorker(QThread):
                     except Exception:
                         pass
                     continue
+                if op == "purge":
+                    # Delete for good from a folder (Trash). 'target' holds
+                    # the mail's Message-ID: see mail_actions.bulk_discard.
+                    self._purge(client, folders.get(source_canonical),
+                                op_dict.get("target") or "")
+                    continue
                 if op == "move":
                     # Filter rule: move uid from its source folder to a custom
                     # target folder (the folder name is the server name itself).
@@ -457,6 +463,27 @@ class ImapWorker(QThread):
                 log.exception("worker %s: failed to execute op %s uid %s",
                               self.account.email, op, uid)
                 continue
+
+    def _purge(self, client, server_folder: str | None, message_id: str) -> None:
+        """Permanently delete the mail with *message_id* from *server_folder*."""
+        if not server_folder or not message_id:
+            return
+        # A Message-ID is "<...>" with no quotes or line breaks; anything else
+        # isn't one we stored from a real header, so don't search with it.
+        if (not message_id.startswith("<") or not message_id.endswith(">")
+                or any(c in message_id for c in '"\\\r\n')):
+            log.warning("worker %s: skipping purge, unusable Message-ID",
+                        self.account.email)
+            return
+        client.select_folder(server_folder)
+        uids = client.search(["HEADER", "Message-ID", message_id])
+        if not uids:
+            return   # already gone (or never reached the server's Trash)
+        client.delete_messages(uids)
+        if client.has_capability("UIDPLUS"):
+            client.expunge(uids)      # UID EXPUNGE: only these mails
+        else:
+            client.expunge()          # Trash: removes what's marked deleted there
 
     # ---- thread loop ----
 

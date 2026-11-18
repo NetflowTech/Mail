@@ -17,9 +17,12 @@ from . import theme
 class UndoSendToast(QFrame):
     undo_clicked = Signal()   # user hit Undo within the window
 
-    def __init__(self, seconds: int, parent=None):
+    def __init__(self, seconds: int, parent=None, count: int = 1):
         super().__init__(parent)
         self._remaining = max(1, int(seconds))
+        self._count = max(1, int(count))
+        self.active = True        # False once finished (sent, undone, replaced)
+        self.ids: list[int] = []  # outbox rows this toast can recall
         self.setObjectName("undoToast")
         self.setStyleSheet(f"""
             QFrame#undoToast {{
@@ -68,13 +71,15 @@ class UndoSendToast(QFrame):
             self._refresh()
 
     def _refresh(self):
-        self._label.setText(f"Sending email in {self._remaining}s")
+        what = "email" if self._count == 1 else f"{self._count} emails"
+        self._label.setText(f"Sending {what} in {self._remaining}s")
 
     def _on_undo(self):
         self.undo_clicked.emit()
         self.finish()
 
     def finish(self):
+        self.active = False
         self._timer.stop()
         self.hide()
         self.deleteLater()
