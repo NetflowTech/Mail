@@ -148,3 +148,62 @@ class TestLimits:
         assert ph.table_from_tsv(f"{row}\n{row}") is None
         row = "\t".join(["x"] * 200)
         assert ph.table_from_tsv(f"{row}\n{row}") is not None
+
+
+class TestLengthsToPx:
+    """Qt applies margins, padding and indents only in px; Word writes pt/cm."""
+
+    def test_words_gap_after_a_paragraph_survives(self):
+        # Word's Normal style, as it arrives after the class is inlined.
+        out = ph.lengths_to_px(
+            '<p style="margin-top:0cm; margin-bottom:8.0pt; line-height:115%; '
+            'font-size:12.0pt">x</p>')
+        assert "margin-top:0px" in out and "margin-bottom:11px" in out
+        # Font size and line height are Qt-readable as they are.
+        assert "font-size:12.0pt" in out and "line-height:115%" in out
+
+    def test_indents_shorthand_and_units(self):
+        out = ph.lengths_to_px(
+            "<p style='margin:0cm 0cm .0001pt 36.0pt;text-indent:-18.0pt;"
+            "padding:0in 5.4pt'>x</p>")
+        assert "margin:0px 0px 0px 48px" in out
+        assert "text-indent:-24px" in out
+        assert "padding:0px 7px" in out
+
+    def test_quotes_inside_stay_valid(self):
+        out = ph.lengths_to_px(
+            """<p style='margin-left:1cm;font-family:"Aptos"'>x</p>""")
+        assert out == """<p style="margin-left:38px;font-family:'Aptos'">x</p>"""
+
+    def test_px_and_unrelated_styles_are_untouched(self):
+        html = '<p style="margin-bottom:11px; width:5cm">x</p>'
+        assert ph.lengths_to_px(html) == html
+
+    def test_clean_runs_it_on_word_clipboard_html(self):
+        word = ('<style><!-- p.MsoNormal {margin-top:0cm; margin-bottom:8.0pt;'
+                ' mso-pagination:widow-orphan} --></style>'
+                '<p class=MsoNormal>One</p>')
+        assert "margin-bottom:11px" in ph.clean(word)
+
+
+def test_pasted_word_paragraphs_keep_their_gap(qtbot):
+    from PySide6.QtCore import QMimeData
+    from emailclient.ui import theme
+    from emailclient.ui.compose import _RichBody
+    from emailclient.outgoing_html import email_ready_html
+    theme.apply_theme("AMail Light")
+    ed = _RichBody()
+    qtbot.addWidget(ed)
+    md = QMimeData()
+    md.setHtml('<style><!-- p.MsoNormal {margin:0cm 0cm 8.0pt 0cm; '
+               'line-height:115%} --></style>'
+               '<p class=MsoNormal>One</p><p class=MsoNormal>Two</p>')
+    ed.insertFromMimeData(md)
+    gaps = []
+    b = ed.document().begin()
+    while b.isValid():
+        if b.text().strip():
+            gaps.append(b.blockFormat().bottomMargin())
+        b = b.next()
+    assert gaps == [11.0, 11.0]
+    assert "margin-bottom:11px" in email_ready_html(ed.toHtml())

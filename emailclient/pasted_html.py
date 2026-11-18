@@ -158,6 +158,47 @@ def strip_white_backgrounds(html: str) -> str:
     return _WHITE_BGCOLOR_ATTR.sub("", out)
 
 
+# ----- lengths ----------------------------------------------------------------
+
+# Qt reads margins, padding and indents only in px: Word's "margin-bottom:8.0pt"
+# (the gap after every paragraph) and "text-indent:-18.0pt" became 0, and the
+# pasted paragraphs ran together. Font sizes in pt are fine and left alone.
+_BOX_PROPS = ("margin", "padding", "text-indent")
+_PX_PER = {"pt": 96 / 72, "pc": 16.0, "in": 96.0, "cm": 96 / 2.54,
+           "mm": 96 / 25.4}
+_LENGTH = re.compile(r"(-?(?:\d+\.?\d*|\.\d+))(pt|pc|in|cm|mm)\b",
+                     re.IGNORECASE)
+
+
+def _to_px(m: re.Match) -> str:
+    px = round(float(m.group(1)) * _PX_PER[m.group(2).lower()])
+    return f"{px or 0}px"   # "or 0": no "-0px"
+
+
+def lengths_to_px(html: str) -> str:
+    """Rewrite margin / padding / text-indent lengths in style attributes as
+    px, the only unit QTextEdit's HTML parser applies to them."""
+    if not html:
+        return html
+
+    def fix_style(m: re.Match) -> str:
+        value = _attr_value(m)
+        decls = []
+        changed = False
+        for d in value.split(";"):
+            prop, sep, val = d.partition(":")
+            if sep and prop.strip().lower().startswith(_BOX_PROPS):
+                new = _LENGTH.sub(_to_px, val)
+                changed |= new != val
+                d = prop + sep + new
+            decls.append(d)
+        if not changed:
+            return m.group(0)
+        return ' style="' + ";".join(decls).replace('"', "'") + '"'
+
+    return _STYLE_ATTR.sub(fix_style, html)
+
+
 # ----- what came from where -----------------------------------------------------
 
 def is_spreadsheet(html: str) -> bool:
@@ -190,4 +231,4 @@ def clean(html: str) -> str:
     """Everything a pasted HTML fragment gets before QTextEdit parses it."""
     if not html:
         return html
-    return strip_white_backgrounds(inline_class_styles(html))
+    return strip_white_backgrounds(lengths_to_px(inline_class_styles(html)))
