@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}PCs · AMail Admin{% endblock %}
+{% block body %}
+<h1>PCs</h1>
+{% if not views %}
+<div class="card empty">
+  <p>No PCs yet. Open <a href="{{ url_for('settings_page') }}">Settings</a>, copy the setup code,
+  and paste it into AMail on a PC under <b>Settings → Organization</b>.</p>
+</div>
+{% endif %}
+{% for v in views %}
+<a class="card device {{ v.d.status }}" href="{{ url_for('device_page', device_id=v.d.id) }}">
+  <div class="row">
+    <div>
+      <div class="name">{{ v.d.name }}</div>
+      <div class="sub">{{ v.d.os or 'Unknown OS' }} · last check-in {{ v.d.last_seen|ago }}{% if v.d.last_ip %} from {{ v.d.last_ip }}{% endif %}</div>
+    </div>
+    <div class="tags">
+      {% if v.d.status == 'pending' %}<span class="tag warn">Waiting for approval</span>
+      {% elif v.d.status == 'revoked' %}<span class="tag bad">Blocked</span>
+      {% elif v.online %}<span class="tag ok">Online</span>
+      {% else %}<span class="tag muted">Offline</span>{% endif %}
+    </div>
+  </div>
+  {% if v.accounts %}
+  <ul class="accounts">
+    {% for a in v.accounts %}<li><span class="dot {{ a.tone }}"></span>{{ a.email }} <em>{{ a.label }}</em></li>{% endfor %}
+  </ul>
+  {% elif v.d.status == 'approved' %}<p class="sub">No managed accounts.</p>{% endif %}
+  {% if v.personal %}<p class="sub">Added by the user: {{ v.personal|join(', ') }}</p>{% endif %}
+</a>
+{% endfor %}
+{% endblock %}

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}AMail Admin{% endblock %}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='panel.css') }}">
+</head>
+<body>
+{% if user %}
+<header class="top">
+  <div class="brand">AMail <span>Admin</span></div>
+  <nav>
+    <a href="{{ url_for('dashboard') }}" class="{{ 'on' if request.endpoint in ('dashboard', 'device_page') }}">PCs{% if pending %} <b class="badge">{{ pending }}</b>{% endif %}</a>
+    <a href="{{ url_for('mailboxes') }}" class="{{ 'on' if request.endpoint in ('mailboxes', 'mailbox_page') }}">Mailboxes</a>
+    <a href="{{ url_for('settings_page') }}" class="{{ 'on' if request.endpoint == 'settings_page' }}">Settings</a>
+    <a href="{{ url_for('audit_page') }}" class="{{ 'on' if request.endpoint == 'audit_page' }}">Activity</a>
+  </nav>
+  <form method="post" action="{{ url_for('logout') }}" class="logout">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <span>{{ user }}</span><button class="link">Sign out</button>
+  </form>
+</header>
+{% endif %}
+<main>
+{% for a in alerts %}<div class="flash bad">⚠ {{ a }}</div>{% endfor %}
+{% with msgs = get_flashed_messages(with_categories=true) %}
+  {% for tone, msg in msgs %}<div class="flash {{ tone }}">{{ msg }}</div>{% endfor %}
+{% endwith %}
+{% block body %}{% endblock %}
+</main>
+</body>
+</html>

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Mailboxes · AMail Admin{% endblock %}
+{% block body %}
+<h1>Mailboxes</h1>
+<p class="sub">Email accounts you can sign PCs in to. Passwords are stored encrypted and are never shown again, here or on any PC.</p>
+
+{% if rows %}
+<div class="card">
+<table>
+  <tr><th>Mailbox</th><th>Server</th><th>Signed in on</th></tr>
+  {% for r in rows %}
+  <tr>
+    <td><a href="{{ url_for('mailbox_page', mailbox_id=r.m.id) }}">{{ r.m.email }}</a>{% if r.m.display_name %}<div class="sub">{{ r.m.display_name }}</div>{% endif %}</td>
+    <td class="sub">{% if r.m.auth == 'google' %}Google sign-in{% elif r.m.auth == 'microsoft' %}Microsoft sign-in{% else %}{{ r.m.imap_host }}{% endif %}</td>
+    <td>{% for d in r.devices %}{{ d.name }}{{ ', ' if not loop.last }}{% else %}<span class="sub">No PCs</span>{% endfor %}</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% endif %}
+
+<section class="card">
+  <h2>Add a Google or Microsoft mailbox</h2>
+  <p class="sub">Gmail / Google Workspace, Outlook.com / Microsoft 365: you sign the mailbox in once with Google or Microsoft. No password is stored or sent to PCs.</p>
+  <form method="post" action="{{ url_for('mailbox_oauth_start') }}" class="grid">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Email address <input name="email" type="email" required></label>
+    <label>Display name <input name="display_name" maxlength="120" placeholder="Shown as the sender name"></label>
+    <div class="wide grant">
+      <button class="primary" name="provider" value="google">Sign in with Google</button>
+      <button class="primary" name="provider" value="microsoft">Sign in with Microsoft</button>
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Add a mailbox with a password</h2>
+  <p class="sub">For your own mail host (cPanel, Plesk…). Gmail and Microsoft refuse normal passwords here: use the box above for them.</p>
+  <form method="post" action="{{ url_for('mailbox_add') }}" class="grid">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    {% include "_mailbox_fields.html" %}
+    <label class="wide">Password <input name="password" type="password" autocomplete="new-password" required></label>
+    <label class="wide check"><input type="checkbox" name="test" value="1" checked> Check the server accepts this password before saving</label>
+    <div class="wide"><button class="primary">Add mailbox</button></div>
+  </form>
+</section>
+{% endblock %}

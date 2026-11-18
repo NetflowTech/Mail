@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}{{ m.email }} · AMail Admin{% endblock %}
+{% block body %}
+<p class="crumb"><a href="{{ url_for('mailboxes') }}">Mailboxes</a> /</p>
+<h1>{{ m.email }}</h1>
+
+<section class="card">
+  <h2>Signed in on</h2>
+  {% if on %}
+  <table>
+    {% for d in on %}
+    <tr>
+      <td><a href="{{ url_for('device_page', device_id=d.id) }}">{{ d.name }}</a></td>
+      <td>{% if online(d) %}<span class="tag ok">Online</span>{% else %}<span class="tag muted">Offline</span>{% endif %}</td>
+      <td class="act"><form method="post" action="{{ url_for('device_ungrant', device_id=d.id) }}">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="mailbox_id" value="{{ m.id }}">
+        <input type="hidden" name="next" value="mailbox">
+        <button class="danger small">Sign out</button>
+      </form></td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="sub">Not signed in on any PC.</p>{% endif %}
+  {% if others %}
+  <div class="grant">
+    {% for d in others %}
+    <form method="post" action="{{ url_for('device_grant', device_id=d.id) }}" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="mailbox_id" value="{{ m.id }}">
+      <input type="hidden" name="next" value="mailbox">
+      <button>Sign in on {{ d.name }}</button>
+    </form>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+
+{% if m.auth != 'password' %}
+<section class="card">
+  <h2>{{ 'Google' if m.auth == 'google' else 'Microsoft' }} sign-in</h2>
+  <p>This mailbox signs in with {{ 'Google' if m.auth == 'google' else 'Microsoft' }}. No password is stored.</p>
+  <form method="post" action="{{ url_for('mailbox_oauth_start') }}" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="mailbox_id" value="{{ m.id }}">
+    <button name="provider" value="{{ m.auth }}">Renew sign-in</button>
+  </form>
+  <p class="sub">Renewing replaces the sign-in on every PC that's signed in to it.{% if m.auth == 'google' %} The old one is cancelled at Google, so a copy taken off a PC stops working.{% else %} To cut off an old copy at Microsoft, change the account's password (that ends all its sign-ins), then renew here.{% endif %}</p>
+</section>
+{% else %}
+<section class="card">
+  <h2>Settings</h2>
+  {% set form = m %}{% set lock_email = true %}
+  <form method="post" action="{{ url_for('mailbox_edit', mailbox_id=m.id) }}" class="grid">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    {% include "_mailbox_fields.html" %}
+    <label class="wide">New password <input name="password" type="password" autocomplete="new-password" placeholder="Leave empty to keep the current password"></label>
+    <label class="wide check"><input type="checkbox" name="test" value="1" checked> Check the server accepts it before saving</label>
+    <p class="wide sub">Changed the password at your mail host because it may have leaked? Enter the new one here: PCs still signed in get it automatically, and PCs you signed out never do.</p>
+    <div class="wide"><button class="primary">Save</button></div>
+  </form>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Delete</h2>
+  <form method="post" action="{{ url_for('mailbox_delete', mailbox_id=m.id) }}" class="confirm">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label><input type="checkbox" required> Delete this mailbox and sign it out of every PC</label>
+    <button class="danger">Delete mailbox</button>
+  </form>
+</section>
+{% endblock %}

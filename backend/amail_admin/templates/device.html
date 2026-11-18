@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}{{ v.d.name }} · AMail Admin{% endblock %}
+{% block body %}
+<p class="crumb"><a href="{{ url_for('dashboard') }}">PCs</a> /</p>
+<h1>{{ v.d.name }}
+  {% if v.d.status == 'pending' %}<span class="tag warn">Waiting for approval</span>
+  {% elif v.d.status == 'revoked' %}<span class="tag bad">Blocked</span>
+  {% elif v.online %}<span class="tag ok">Online</span>
+  {% else %}<span class="tag muted">Offline</span>{% endif %}
+</h1>
+<p class="sub">{{ v.d.os or 'Unknown OS' }} · AMail {{ v.d.app_version or '?' }} · registered {{ v.d.created_at|ago }} · last check-in {{ v.d.last_seen|ago }}{% if v.d.last_ip %} from {{ v.d.last_ip }}{% endif %}</p>
+
+{% if v.d.status == 'pending' %}
+<div class="card">
+  <p>This PC asked to join. Before approving, check it really is that PC: on the PC, open <b>AMail → Settings → Organization</b> and type the check code it shows below. (The panel doesn't show it, so it can only come from the PC itself.)</p>
+  <form method="post" action="{{ url_for('device_approve', device_id=v.d.id) }}" class="grant">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input name="check_code" placeholder="Check code shown on the PC" maxlength="12" required autocomplete="off">
+    <button class="primary">Approve this PC</button>
+  </form>
+  <p class="sub">A different code means someone else made this request with your setup code: block it, and make a new enrollment code in Settings.</p>
+</div>
+{% endif %}
+
+{% if v.d.status == 'approved' %}
+<section class="card">
+  <h2>Accounts on this PC</h2>
+  {% if v.accounts %}
+  <table>
+    <tr><th>Mailbox</th><th>State</th><th></th></tr>
+    {% for a in v.accounts %}
+    <tr>
+      <td>{{ a.email }}</td>
+      <td><span class="dot {{ a.tone }}"></span>{{ a.label }}</td>
+      <td class="act">{% if a.granted %}
+        <form method="post" action="{{ url_for('device_ungrant', device_id=v.d.id) }}">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="mailbox_id" value="{{ a.mailbox.id }}">
+          <button class="danger small">Sign out</button>
+        </form>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="sub">Not signed in to any mailbox.</p>{% endif %}
+  {% if v.personal %}<p class="sub">Also on this PC, added by the user: {{ v.personal|join(', ') }}</p>{% endif %}
+
+  {% if available %}
+  <form method="post" action="{{ url_for('device_grant', device_id=v.d.id) }}" class="grant">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <select name="mailbox_id" required>
+      {% for m in available %}<option value="{{ m.id }}">{{ m.email }}</option>{% endfor %}
+    </select>
+    <button class="primary">Sign in</button>
+  </form>
+  {% else %}<p class="sub">Every mailbox is already on this PC. <a href="{{ url_for('mailboxes') }}">Add a mailbox</a>.</p>{% endif %}
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Manage PC</h2>
+  <form method="post" action="{{ url_for('device_rename', device_id=v.d.id) }}" class="grant">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input name="name" value="{{ v.d.name }}" maxlength="80" required>
+    <button>Rename</button>
+  </form>
+  {% if v.d.status != 'revoked' %}
+  <form method="post" action="{{ url_for('device_block', device_id=v.d.id) }}" class="confirm">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label><input type="checkbox" required> Block this PC: sign it out of every managed account and stop it checking in</label>
+    <button class="danger">Block PC</button>
+  </form>
+  {% else %}
+  <form method="post" action="{{ url_for('device_delete', device_id=v.d.id) }}" class="confirm">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label><input type="checkbox" required> Delete this PC from the list. Only do this once it has checked in since being blocked{% if v.accounts %} (it still reports managed accounts){% endif %}.</label>
+    <button class="danger">Delete</button>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

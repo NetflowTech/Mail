@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Activity · AMail Admin{% endblock %}
+{% block body %}
+<h1>Activity</h1>
+<div class="card">
+<table>
+  <tr><th>When</th><th>Who</th><th>What</th><th></th></tr>
+  {% for r in rows %}
+  <tr><td class="sub nowrap">{{ r.at|ago }}</td><td>{{ r.actor }}</td><td>{{ r.action.replace('_', ' ') }}</td><td class="sub">{{ r.detail }}</td></tr>
+  {% else %}
+  <tr><td colspan="4" class="sub">Nothing yet.</td></tr>
+  {% endfor %}
+</table>
+</div>
+{% endblock %}

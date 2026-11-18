@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Settings · AMail Admin{% endblock %}
+{% block body %}
+<h1>Settings</h1>
+
+<section class="card">
+  <h2>Setup code for a new PC</h2>
+  {% if public_url %}
+  <p>In AMail on the PC, open <b>Settings → Organization</b>, paste this code, and click <b>Connect</b>. The PC then shows up under PCs, waiting for you to approve it.</p>
+  <textarea class="code" readonly rows="3">{{ code }}</textarea>
+  <p class="sub">It contains the server address, this server's certificate fingerprint, and the enrollment code. Treat it like a key to the front door: anyone with it can ask to join (you still approve each PC).</p>
+  {% else %}
+  <p class="flash bad">Set the server address below first.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Server address PCs use</h2>
+  <form method="post" action="{{ url_for('settings_server') }}" class="grid">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="wide">Address <input name="public_url" value="{{ public_url }}" placeholder="https://amail.example.com:8443" required></label>
+    <label class="wide check"><input type="checkbox" name="pin" value="1" {% if pin %}checked{% endif %}> PCs trust only this server's own certificate (leave on unless a tunnel or proxy in front of the server has its own certificate)</label>
+    <p class="wide sub">Certificate fingerprint: <code>{{ fingerprint }}</code> · <a href="{{ url_for('certificate') }}">Download certificate</a> (install it as trusted on admin PCs so the browser never warns)</p>
+    <div class="wide"><button class="primary">Save</button></div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Enrollment</h2>
+  <p>Enrollment code: <code>{{ enroll_code }}</code></p>
+  <form method="post" action="{{ url_for('settings_enrollment') }}" class="grid">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="wide check"><input type="checkbox" name="open" value="1" {% if enroll_open %}checked{% endif %}> New PCs can ask to join</label>
+    <div class="wide"><button>Save</button></div>
+  </form>
+  <form method="post" action="{{ url_for('settings_enrollment') }}" class="confirm">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="rotate" value="1">
+    <label><input type="checkbox" required> Make a new enrollment code (the current setup code stops working for new PCs; PCs already added are not affected)</label>
+    <button>New code</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Google and Microsoft sign-in</h2>
+  <p class="sub">Leave empty to use the public desktop registrations AMail itself uses. For long-term use, register your own app with Google Cloud / Microsoft Entra (type: desktop app, redirect: loopback) and enter it here.</p>
+  <form method="post" action="{{ url_for('settings_oauth') }}" class="grid">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Google client ID <input name="google_id" value="{{ oauth_ids.google }}" placeholder="(AMail's default)"></label>
+    <label>Google client secret <input name="google_secret" type="password" placeholder="{{ 'saved' if oauth_ids.google else '(default)' }}" autocomplete="off"></label>
+    <label>Microsoft client ID <input name="microsoft_id" value="{{ oauth_ids.microsoft }}" placeholder="(AMail's default)"></label>
+    <div></div>
+    <div class="wide"><button>Save</button></div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Your password</h2>
+  <form method="post" action="{{ url_for('settings_password') }}" class="grid">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Current password <input name="current" type="password" autocomplete="current-password" required></label>
+    <label>New password (12+ characters) <input name="new" type="password" autocomplete="new-password" minlength="12" required></label>
+    <div class="wide"><button>Change password</button></div>
+  </form>
+</section>
+{% endblock %}
