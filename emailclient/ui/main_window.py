@@ -132,7 +132,7 @@ class MainWindow(QMainWindow):
         tb.addWidget(title)
         compose_btn = QPushButton(" Compose")
         compose_btn.setObjectName("primary")
-        compose_btn.setIcon(editor_icons.icon("compose", "#FFFFFF"))
+        editor_icons.set_icon(compose_btn, "compose", "ON_ACCENT")
         compose_btn.setIconSize(QSize(16, 16))
         compose_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         compose_btn.clicked.connect(self.compose_new)
@@ -163,7 +163,7 @@ class MainWindow(QMainWindow):
 
         self.date_btn = QPushButton()
         self.date_btn.setObjectName("flatTool")
-        self.date_btn.setIcon(editor_icons.icon("calendar"))
+        editor_icons.set_icon(self.date_btn, "calendar")
         self.date_btn.setIconSize(QSize(17, 17))
         self.date_btn.setCheckable(True)
         self.date_btn.setToolTip("Filter by date")
@@ -189,8 +189,10 @@ class MainWindow(QMainWindow):
         self.search_box = QLineEdit()
         self.search_box.setObjectName("searchBox")
         self.search_box.setPlaceholderText("Search all emails…")
-        self.search_box.addAction(editor_icons.icon("search", theme.TEXT_FAINT),
-                                  QLineEdit.ActionPosition.LeadingPosition)
+        editor_icons.set_icon(
+            self.search_box.addAction(editor_icons.icon("search", "TEXT_FAINT"),
+                                      QLineEdit.ActionPosition.LeadingPosition),
+            "search", "TEXT_FAINT")
         self.search_box.setClearButtonEnabled(True)
         self.search_box.setFixedWidth(260)
         self._search_timer = QTimer(self)
@@ -208,7 +210,7 @@ class MainWindow(QMainWindow):
 
         self.layout_btn = QPushButton()
         self.layout_btn.setObjectName("flatTool")
-        self.layout_btn.setIcon(editor_icons.icon("grid"))
+        editor_icons.set_icon(self.layout_btn, "grid")
         self.layout_btn.setIconSize(QSize(17, 17))
         self.layout_btn.setCheckable(True)
         self.layout_btn.setToolTip("Switch between Sidebar / Tabs view")
@@ -218,7 +220,7 @@ class MainWindow(QMainWindow):
 
         notif_btn = QPushButton()
         notif_btn.setObjectName("flatTool")
-        notif_btn.setIcon(editor_icons.icon("bell"))
+        editor_icons.set_icon(notif_btn, "bell")
         notif_btn.setIconSize(QSize(17, 17))
         notif_btn.setToolTip("Notifications")
         notif_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -226,7 +228,7 @@ class MainWindow(QMainWindow):
         tb.addWidget(notif_btn)
 
         self.approvals_btn = QPushButton(" Approvals")
-        self.approvals_btn.setIcon(editor_icons.icon("hourglass"))
+        editor_icons.set_icon(self.approvals_btn, "hourglass")
         self.approvals_btn.setIconSize(QSize(16, 16))
         self.approvals_btn.setToolTip("Emails waiting for your approval")
         self.approvals_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -236,7 +238,7 @@ class MainWindow(QMainWindow):
 
         settings_btn = QPushButton()
         settings_btn.setObjectName("flatTool")
-        settings_btn.setIcon(editor_icons.icon("gear"))
+        editor_icons.set_icon(settings_btn, "gear")
         settings_btn.setIconSize(QSize(17, 17))
         settings_btn.setToolTip("Settings")
         settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -248,20 +250,20 @@ class MainWindow(QMainWindow):
         # that closes as soon as focus leaves it — not what we want here).
         add_btn = QPushButton(" Add Account")
         add_btn.setObjectName("primary")
-        add_btn.setIcon(editor_icons.icon("plus", "#FFFFFF"))
+        editor_icons.set_icon(add_btn, "plus", "ON_ACCENT")
         add_btn.setIconSize(QSize(16, 16))
         add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         add_btn.clicked.connect(self.add_account)
 
         bulk_btn = QPushButton(" Bulk")
-        bulk_btn.setIcon(editor_icons.icon("bulk"))
+        editor_icons.set_icon(bulk_btn, "bulk")
         bulk_btn.setIconSize(QSize(16, 16))
         bulk_btn.setToolTip("Add many accounts at once")
         bulk_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         bulk_btn.clicked.connect(self.bulk_add_accounts)
 
         exit_btn = QPushButton(" Exit")
-        exit_btn.setIcon(editor_icons.icon("power", "#C0392B"))
+        editor_icons.set_icon(exit_btn, "power", "DANGER")
         exit_btn.setIconSize(QSize(17, 17))
         exit_btn.setToolTip("Exit — quit AMail completely "
                             "(stops background sync)")
@@ -341,6 +343,9 @@ class MainWindow(QMainWindow):
 
         # Persistent notification window: cards stay until the email is opened.
         self.toast = NotificationStack()
+        # Theme/density switches (Settings, or the OS flipping light/dark
+        # while "System" is chosen) repaint the delegate-drawn surfaces.
+        theme.on_change(self._apply_appearance)
         self.toast.message_clicked.connect(self._open_from_notification)
         # ✕ on a card schedules an unread reminder a minute later.
         self._reminder_counts: dict[int, int] = {}
@@ -699,7 +704,6 @@ class MainWindow(QMainWindow):
                 0, "AMail Test 🔔",
                 "If this appeared over Chrome/another app, everything works ✅",
                 theme.GOLD)))
-        dlg.appearance_changed.connect(self._apply_appearance)
         dlg.exec()
         # Popup position may have changed → move any visible cards immediately.
         self.toast.apply_settings()
@@ -794,7 +798,7 @@ class MainWindow(QMainWindow):
             # Persistent history (🔔): survives until the user reads/clears it.
             self.db.add_notification(None, "⛔ Email rejected by admin", body)
             self.toast.push(self._REJECT_TOAST_ID,
-                            "⛔ Email rejected by admin", body, "#C0392B")
+                            "⛔ Email rejected by admin", body, theme.DANGER)
             if ns.enabled:
                 notify.send("⛔ Email rejected by admin", body, sound="default")
         if ns.enabled and ns.sound_enabled:
@@ -1089,9 +1093,8 @@ class MainWindow(QMainWindow):
         row.setSpacing(7)
 
         icon = QLabel()
-        icon.setPixmap(editor_icons.icon(
-            "compose",
-            theme.TEXT_FAINT if minimised else theme.GOLD_DEEP).pixmap(13, 13))
+        editor_icons.set_icon(icon, "compose",
+                              "TEXT_FAINT" if minimised else "GOLD_DEEP", 13)
         icon.setFixedSize(13, 13)
         row.addWidget(icon)
 
@@ -1111,7 +1114,7 @@ class MainWindow(QMainWindow):
         close.setObjectName("composerChipClose")
         close.setFlat(True)
         close.setFixedSize(16, 16)
-        close.setIcon(editor_icons.icon("close", theme.TEXT_DIM))
+        editor_icons.set_icon(close, "close", "TEXT_DIM")
         close.setIconSize(QSize(9, 9))
         close.setCursor(Qt.CursorShape.PointingHandCursor)
         close.setToolTip("Close this compose window")

@@ -254,28 +254,29 @@ class _Chip(QFrame):
         lay.setSpacing(5)
         lbl = QLabel(label_text)
         lbl.setToolTip(display)
-        lbl.setStyleSheet("background: transparent; border: none;")
+        lbl.setObjectName("recipChipLabel")
+        lbl.setStyleSheet("QLabel#recipChipLabel { background: transparent; border: none; }")
         lay.addWidget(lbl)
         x = QPushButton()
         x.setObjectName("recipChipX")
-        x.setIcon(editor_icons.icon("close", theme.GOLD_DEEP))
+        editor_icons.set_icon(x, "close", "GOLD_DEEP")
         x.setIconSize(QSize(9, 9))
         x.setCursor(Qt.CursorShape.PointingHandCursor)
         x.setFixedSize(17, 17)
         x.setToolTip("Remove")
         x.clicked.connect(lambda: self.removed.emit(self))
         lay.addWidget(x)
-        self.setStyleSheet(f"""
+        theme.style(self, """
             QFrame#recipChip {{
-                background: {theme.GOLD_SOFT};
-                border: 1px solid {theme.GOLD};
+                background: {GOLD_SOFT};
+                border: 1px solid {GOLD};
                 border-radius: 11px;
             }}
-            QFrame#recipChip QLabel {{ color: {theme.GOLD_DEEP}; font-size: 12px; }}
+            QFrame#recipChip QLabel {{ color: {GOLD_DEEP}; font-size: 12px; }}
             QPushButton#recipChipX {{
                 border: none; background: transparent; border-radius: 8px;
             }}
-            QPushButton#recipChipX:hover {{ background: {theme.GOLD}; }}
+            QPushButton#recipChipX:hover {{ background: {GOLD}; }}
         """)
 
     # ----- dragging -------------------------------------------------------
@@ -315,7 +316,8 @@ class _InlineEdit(QLineEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFrame(False)
-        self.setStyleSheet("background: transparent; border: none;")
+        self.setObjectName("recipEditor")
+        self.setStyleSheet("QLineEdit#recipEditor { background: transparent; border: none; }")
 
     def minimumSizeHint(self):
         h = super().minimumSizeHint()
@@ -388,10 +390,10 @@ class RecipientEdit(QWidget):
         popup = completer.popup()
         popup.setItemDelegate(_RecipientDelegate(popup))
         popup.setObjectName("recipientPopup")
-        popup.setStyleSheet(f"""
+        theme.style(popup, """
             QListView#recipientPopup {{
-                background: {theme.BG};
-                border: 1px solid {theme.BORDER};
+                background: {BG};
+                border: 1px solid {BORDER};
                 border-radius: 10px;
                 padding: 4px;
                 outline: none;

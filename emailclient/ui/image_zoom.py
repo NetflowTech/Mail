@@ -66,7 +66,10 @@ class ImageZoomDialog(QDialog):
         self._scroll.setWidgetResizable(True)
         self._scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._scroll.setWidget(self._label)
-        self._scroll.setStyleSheet(f"background:{theme.PANEL};border:none;")
+        self._scroll.setObjectName("zoomScroll")
+        self._scroll.setStyleSheet(
+            f"QScrollArea#zoomScroll, QScrollArea#zoomScroll > QWidget"
+            f" {{ background: {theme.PANEL}; border: none; }}")
         lay.addWidget(self._scroll, 1)
 
         bar = QHBoxLayout()

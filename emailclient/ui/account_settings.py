@@ -242,7 +242,7 @@ class AccountSettingsDialog(QDialog):
                 ("image", "Insert image", self._sig_insert_image, False),
                 ("color", "Text color", self._sig_text_color, False)):
             b = QPushButton()
-            b.setIcon(editor_icons.icon(icon_name))
+            editor_icons.set_icon(b, icon_name)
             b.setFixedWidth(34)
             b.setCheckable(checkable)
             b.setToolTip(tip)
@@ -389,8 +389,10 @@ class AccountSettingsDialog(QDialog):
     def _update_color_swatch(self):
         is_default = not self._acc_color
         eff = self._acc_color or theme.GOLD
+        self._color_swatch.setObjectName("accColorSwatch")
         self._color_swatch.setStyleSheet(
-            f"background:{eff}; border:1px solid {theme.BORDER}; border-radius:5px;")
+            f"QLabel#accColorSwatch {{ background:{eff}; border:1px solid {theme.BORDER};"
+            f" border-radius:5px; }}")
         self._color_state.setText("Theme default" if is_default else eff)
         self._color_reset.setEnabled(not is_default)
 

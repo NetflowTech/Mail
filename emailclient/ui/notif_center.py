@@ -135,9 +135,10 @@ class NotifPopup(QDialog):
         # -- empty state --
         self.empty_lbl = QLabel("No notifications yet")
         self.empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_lbl.setObjectName("notifEmpty")
         self.empty_lbl.setStyleSheet(
-            f"color: {theme.TEXT_FAINT}; font-size: 13px;"
-            f" background: {theme.PANEL};")
+            f"QLabel#notifEmpty {{ color: {theme.TEXT_FAINT}; font-size: 13px;"
+            f" background: {theme.PANEL}; }}")
         layout.addWidget(self.empty_lbl, 1)
         self.empty_lbl.hide()
 

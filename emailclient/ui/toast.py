@@ -33,8 +33,9 @@ class _Card(QFrame):
         lay.setContentsMargins(12, 10, 8, 10)
 
         dot = QLabel("●")
-        dot.setStyleSheet(f"color: {color}; font-size: 10px;"
-                          "background: transparent;")
+        dot.setObjectName("toastDot")
+        dot.setStyleSheet(f"QLabel#toastDot {{ color: {color}; font-size: 10px;"
+                          " background: transparent; }}")
         lay.addWidget(dot, 0, Qt.AlignmentFlag.AlignTop)
 
         text = QVBoxLayout()
@@ -43,10 +44,12 @@ class _Card(QFrame):
         f.setWeight(QFont.Weight.DemiBold)
         t.setFont(f)
         t.setWordWrap(True)
-        t.setStyleSheet("background: transparent;")
+        t.setObjectName("toastTitle")
+        t.setStyleSheet("QLabel#toastTitle { background: transparent; }")
         s = QLabel(subject)
         s.setWordWrap(True)
-        s.setStyleSheet(f"color: {theme.TEXT_DIM}; background: transparent;")
+        s.setObjectName("toastSubject")
+        s.setStyleSheet(f"QLabel#toastSubject {{ color: {theme.TEXT_DIM}; background: transparent; }}")
         text.addWidget(t)
         text.addWidget(s)
         lay.addLayout(text, 1)
@@ -104,6 +107,7 @@ class NotificationStack(QWidget):
         header_row.addWidget(self._mark_all, 0, Qt.AlignmentFlag.AlignVCenter)
         outer.addLayout(header_row)
         self.restyle()
+        theme.on_change(self.restyle)
 
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)

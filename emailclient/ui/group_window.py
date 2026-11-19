@@ -151,7 +151,7 @@ class GroupWindow(QMainWindow):
 
         self.date_btn = QPushButton()
         self.date_btn.setObjectName("flatTool")
-        self.date_btn.setIcon(editor_icons.icon("calendar"))
+        editor_icons.set_icon(self.date_btn, "calendar")
         self.date_btn.setIconSize(QSize(17, 17))
         self.date_btn.setCheckable(True)
         self.date_btn.setToolTip("Filter by date")

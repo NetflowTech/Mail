@@ -63,7 +63,8 @@ class _HistoryDialog(QDialog):
         self._load()
 
     def _load(self):
-        self._view.setHtml("<p style='color:#888;padding:12px'>Loading…</p>")
+        self._view.setHtml(
+            f"<p style='color:{theme.TEXT_DIM};padding:12px'>Loading…</p>")
         import threading
 
         def work():
@@ -84,7 +85,7 @@ class _HistoryDialog(QDialog):
     def _render(self, entries):
         if not entries:
             self._view.setHtml(
-                "<p style='color:#888;padding:12px'>No history yet.</p>")
+                f"<p style='color:{theme.TEXT_DIM};padding:12px'>No history yet.</p>")
             return
         rows = []
         for e in entries:
@@ -97,17 +98,18 @@ class _HistoryDialog(QDialog):
             to = _html.escape(str(e.get("to", "")))
             sender = _html.escape(str(e.get("sender", "")))
             detail = _html.escape(str(e.get("detail", "")))
-            sender_html = (f"<br><span style='color:#888'>sent by {sender}</span>"
+            dim, faint, line = theme.TEXT_DIM, theme.TEXT_FAINT, theme.BORDER
+            sender_html = (f"<br><span style='color:{faint}'>sent by {sender}</span>"
                            if sender else "")
-            detail_html = (f"<br><span style='color:#888'>{detail}</span>"
+            detail_html = (f"<br><span style='color:{faint}'>{detail}</span>"
                            if detail else "")
             rows.append(
-                f"<tr><td style='white-space:nowrap;color:#666;padding:6px 10px;"
-                f"border-bottom:1px solid #eee'>{when}</td>"
-                f"<td style='padding:6px 10px;border-bottom:1px solid #eee'>"
-                f"<b>{act}</b> &nbsp; <span style='color:#a07c00'>{admin}</span>"
+                f"<tr><td style='white-space:nowrap;color:{dim};padding:6px 10px;"
+                f"border-bottom:1px solid {line}'>{when}</td>"
+                f"<td style='padding:6px 10px;border-bottom:1px solid {line}'>"
+                f"<b>{act}</b> &nbsp; <span style='color:{theme.GOLD_DEEP}'>{admin}</span>"
                 f"<br><b>{subj}</b>"
-                f"<br><span style='color:#666'>from {acct} → {to}</span>"
+                f"<br><span style='color:{dim}'>from {acct} → {to}</span>"
                 f"{sender_html}{detail_html}</td></tr>")
         self._view.setHtml(
             "<table style='width:100%;border-collapse:collapse;"
@@ -117,14 +119,20 @@ class _HistoryDialog(QDialog):
 # Explicit button styles — the approval dialogs set their own stylesheet, so we
 # don't rely on the global #primary rule cascading in (it sometimes doesn't,
 # which left the Approve button invisible).
-_APPROVE_QSS = (
-    f"QPushButton {{ background: {theme.GOLD_DEEP}; color: #FFFFFF;"
-    f" border: none; border-radius: 8px; padding: 6px 16px; font-weight: 600; }}"
-    f" QPushButton:hover {{ background: {theme.GOLD}; }}")
-_REJECT_QSS = (
-    f"QPushButton {{ background: {theme.BG}; color: {theme.TEXT};"
-    f" border: 1px solid {theme.BORDER}; border-radius: 8px; padding: 6px 14px; }}"
-    f" QPushButton:hover {{ background: {theme.PANEL}; }}")
+# Functions, not constants: a constant would bake the palette at import time
+# and keep the first theme's colours after a switch.
+def _approve_qss() -> str:
+    return (
+        f"QPushButton {{ background: {theme.GOLD_DEEP}; color: {theme.ON_ACCENT};"
+        f" border: none; border-radius: 8px; padding: 6px 16px; font-weight: 600; }}"
+        f" QPushButton:hover {{ background: {theme.GOLD}; }}")
+
+
+def _reject_qss() -> str:
+    return (
+        f"QPushButton {{ background: {theme.BG}; color: {theme.TEXT};"
+        f" border: 1px solid {theme.BORDER}; border-radius: 8px; padding: 6px 14px; }}"
+        f" QPushButton:hover {{ background: {theme.PANEL}; }}")
 
 
 class _ItemCard(QFrame):
@@ -185,11 +193,11 @@ class _ItemCard(QFrame):
         btns.addWidget(hint)
         btns.addStretch(1)
         reject = QPushButton("✕ Reject")
-        reject.setStyleSheet(_REJECT_QSS)
+        reject.setStyleSheet(_reject_qss())
         reject.setCursor(Qt.CursorShape.PointingHandCursor)
         reject.clicked.connect(lambda: on_reject(item))
         approve = QPushButton(approve_label)
-        approve.setStyleSheet(_APPROVE_QSS)   # explicit — don't rely on #primary
+        approve.setStyleSheet(_approve_qss())   # explicit — don't rely on #primary
         approve.setCursor(Qt.CursorShape.PointingHandCursor)
         approve.clicked.connect(lambda: on_approve(item))
         btns.addWidget(reject)
@@ -266,8 +274,12 @@ class ApprovalQueueDialog(QDialog):
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._inner = QWidget()
-        self._inner.setStyleSheet(f"background: {theme.BG};")
-        self._scroll.setStyleSheet(f"background: {theme.BG};")
+        self._inner.setObjectName("approvalInner")
+        self._scroll.setObjectName("approvalScroll")
+        self._inner.setStyleSheet(f"QWidget#approvalInner {{ background: {theme.BG}; }}")
+        self._scroll.setStyleSheet(
+            f"QScrollArea#approvalScroll, QScrollArea#approvalScroll > QWidget"
+            f" {{ background: {theme.BG}; }}")
         self._list = QVBoxLayout(self._inner)
         self._list.setContentsMargins(0, 0, 0, 0)
         self._list.setSpacing(8)
@@ -567,11 +579,11 @@ class _ItemDetailDialog(QDialog):
         close = QPushButton("Close")
         close.clicked.connect(self.reject)
         reject = QPushButton("✕ Reject")
-        reject.setStyleSheet(_REJECT_QSS)
+        reject.setStyleSheet(_reject_qss())
         reject.setCursor(Qt.CursorShape.PointingHandCursor)
         reject.clicked.connect(self._do_reject)
         approve = QPushButton(approve_label)
-        approve.setStyleSheet(_APPROVE_QSS)
+        approve.setStyleSheet(_approve_qss())
         approve.setCursor(Qt.CursorShape.PointingHandCursor)
         approve.clicked.connect(self._do_approve)
         btns.addWidget(close)

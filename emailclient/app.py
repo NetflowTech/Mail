@@ -169,9 +169,11 @@ def main():
     app.setStyle("Fusion")  # consistent QSS rendering across platforms
     # theme was applied at import time, before a QApplication existed — redo it
     # now that the OS light/dark hint is readable, so "System" starts correct.
-    theme.apply_theme(theme.current_theme())
+    # install() also sets the application palette (Fusion draws tooltips,
+    # placeholders, disabled text and dialogs from it) and keeps "System"
+    # following the OS when it flips light/dark while the app is running.
+    theme.install(app)
     message_list.apply_density()
-    app.setStyleSheet(theme.build_qss())
     app.setWindowIcon(QIcon(str(LOGO_PATH)))  # window + Dock icon
     # Outlook-style background mode: closing the window hides it, the app
     # keeps syncing; only the tray menu's Quit really exits.
