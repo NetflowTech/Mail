@@ -60,6 +60,25 @@ CREATE TABLE IF NOT EXISTS sessions (
     created_at   REAL NOT NULL,
     last_seen    REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS takeovers (
+    device_id    TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    email        TEXT NOT NULL,
+    requested_at REAL NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'pending',  -- pending | done | declined | failed | ignored
+    note         TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (device_id, email)
+);
+CREATE TABLE IF NOT EXISTS events (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id    TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    email        TEXT NOT NULL DEFAULT '',          -- '' for PC-level events
+    at           REAL NOT NULL,
+    kind         TEXT NOT NULL,
+    detail       TEXT NOT NULL DEFAULT '{}'          -- JSON: subject, who, name
+);
+CREATE INDEX IF NOT EXISTS idx_events_at ON events(at);
+CREATE INDEX IF NOT EXISTS idx_events_device ON events(device_id, at);
+CREATE INDEX IF NOT EXISTS idx_events_email ON events(email, at);
 CREATE TABLE IF NOT EXISTS audit (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     at           REAL NOT NULL,
@@ -89,6 +108,8 @@ class Store:
                                 "TEXT NOT NULL DEFAULT 'password'")
             self._ensure_column("admins", "totp_last_step",
                                 "INTEGER NOT NULL DEFAULT 0")
+            # Free text the admin writes: "Reception desk", "Ali's laptop".
+            self._ensure_column("devices", "note", "TEXT NOT NULL DEFAULT ''")
 
     def _ensure_column(self, table: str, column: str, decl: str) -> None:
         cols = {r["name"] for r in self._db.execute(f"PRAGMA table_info({table})")}
@@ -141,6 +162,14 @@ class Store:
                 (username, pw_hash, time.time()))
         # A new password ends every session that admin had open.
         self.end_sessions(username)
+
+    def list_admins(self) -> list[sqlite3.Row]:
+        return self._q("SELECT username, created_at, totp_secret FROM admins "
+                       "ORDER BY username COLLATE NOCASE")
+
+    def delete_admin(self, username: str) -> None:
+        self.end_sessions(username)
+        self._x("DELETE FROM admins WHERE username=?", (username,))
 
     def set_totp(self, username: str, secret: str, last_step: int = 0) -> None:
         self._x("UPDATE admins SET totp_secret=?, totp_last_step=? WHERE username=?",
@@ -228,8 +257,13 @@ class Store:
             # A revoked PC keeps no grants: re-approving it starts from nothing.
             self._x("DELETE FROM grants WHERE device_id=?", (device_id,))
 
-    def rename_device(self, device_id: str, name: str) -> None:
-        self._x("UPDATE devices SET name=? WHERE id=?", (name, device_id))
+    def rename_device(self, device_id: str, name: str,
+                      note: str | None = None) -> None:
+        if note is None:
+            self._x("UPDATE devices SET name=? WHERE id=?", (name, device_id))
+        else:
+            self._x("UPDATE devices SET name=?, note=? WHERE id=?",
+                    (name, note, device_id))
 
     def delete_device(self, device_id: str) -> None:
         self._x("DELETE FROM devices WHERE id=?", (device_id,))
@@ -241,8 +275,45 @@ class Store:
                 (time.time(), ip, app_version, json.dumps(report), device_id))
 
     # ----- mailboxes -----
-    def mailboxes(self) -> list[sqlite3.Row]:
-        return self._q("SELECT * FROM mailboxes ORDER BY email COLLATE NOCASE")
+    def mailboxes(self, q: str | None = None, limit: int | None = None,
+                  offset: int = 0, unassigned: bool = False) -> list[sqlite3.Row]:
+        sql, args = "SELECT * FROM mailboxes", []
+        where = []
+        if q:
+            like = f"%{q}%"
+            where.append("(email LIKE ? OR display_name LIKE ? OR imap_host LIKE ?)")
+            args += [like, like, like]
+        if unassigned:
+            where.append("id NOT IN (SELECT mailbox_id FROM grants)")
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY email COLLATE NOCASE"
+        if limit is not None:
+            sql += " LIMIT ? OFFSET ?"
+            args += [int(limit), int(offset)]
+        return self._q(sql, tuple(args))
+
+    def mailbox_count(self, q: str | None = None, unassigned: bool = False) -> int:
+        sql, args = "SELECT COUNT(*) AS n FROM mailboxes", []
+        where = []
+        if q:
+            like = f"%{q}%"
+            where.append("(email LIKE ? OR display_name LIKE ? OR imap_host LIKE ?)")
+            args += [like, like, like]
+        if unassigned:
+            where.append("id NOT IN (SELECT mailbox_id FROM grants)")
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        return self._q(sql, tuple(args))[0]["n"]
+
+    def grants_by_mailbox(self) -> dict[int, list[sqlite3.Row]]:
+        """mailbox id -> the devices signed in to it, in one query."""
+        out: dict[int, list] = {}
+        for r in self._q("SELECT g.mailbox_id, d.* FROM grants g "
+                         "JOIN devices d ON d.id = g.device_id "
+                         "ORDER BY d.name COLLATE NOCASE"):
+            out.setdefault(r["mailbox_id"], []).append(r)
+        return out
 
     def mailbox(self, mailbox_id: int) -> sqlite3.Row | None:
         rows = self._q("SELECT * FROM mailboxes WHERE id=?", (mailbox_id,))
@@ -287,9 +358,72 @@ class Store:
         self._x("INSERT OR IGNORE INTO grants(device_id, mailbox_id, created_at) "
                 "VALUES(?,?,?)", (device_id, mailbox_id, time.time()))
 
+    def grant_many(self, device_id: str, mailbox_ids) -> int:
+        ids = [int(i) for i in mailbox_ids]
+        if not ids:
+            return 0
+        before = len(self.granted_mailboxes(device_id))
+        with self._lock:
+            self._db.executemany(
+                "INSERT OR IGNORE INTO grants(device_id, mailbox_id, created_at) "
+                "VALUES(?,?,?)", [(device_id, i, time.time()) for i in ids])
+        return len(self.granted_mailboxes(device_id)) - before
+
+    def revoke_all(self, device_id: str) -> int:
+        return self._x("DELETE FROM grants WHERE device_id=?", (device_id,)).rowcount
+
     def revoke(self, device_id: str, mailbox_id: int) -> None:
         self._x("DELETE FROM grants WHERE device_id=? AND mailbox_id=?",
                 (device_id, mailbox_id))
+
+    # ----- what users did with company mailboxes -----
+    def add_events(self, device_id: str, rows: list[tuple]) -> None:
+        """*rows*: (at, email, kind, detail_json)."""
+        with self._lock:
+            self._db.executemany(
+                "INSERT INTO events(device_id, email, at, kind, detail) "
+                "VALUES(?,?,?,?,?)",
+                [(device_id, e, at, k, d) for at, e, k, d in rows])
+
+    def events(self, device_id: str | None = None, email: str | None = None,
+               since: float | None = None, until: float | None = None,
+               limit: int = 500) -> list[sqlite3.Row]:
+        sql = ("SELECT e.*, d.name AS device_name FROM events e "
+               "JOIN devices d ON d.id = e.device_id WHERE 1=1")
+        args: list = []
+        if device_id:
+            sql += " AND e.device_id=?"; args.append(device_id)
+        if email:
+            sql += " AND e.email=?"; args.append(email.lower())
+        if since is not None:
+            sql += " AND e.at>=?"; args.append(since)
+        if until is not None:
+            sql += " AND e.at<?"; args.append(until)
+        sql += " ORDER BY e.at DESC, e.id DESC LIMIT ?"
+        args.append(int(limit))
+        return self._q(sql, tuple(args))
+
+    def prune_events(self, older_than: float) -> None:
+        self._x("DELETE FROM events WHERE at < ?", (older_than,))
+
+    # ----- take-over of accounts a PC's user added themselves -----
+    def mark_takeover(self, device_id: str, email: str, status: str,
+                      note: str = "") -> None:
+        self._x("INSERT INTO takeovers(device_id, email, requested_at, status, note) "
+                "VALUES(?,?,?,?,?) ON CONFLICT(device_id, email) DO UPDATE SET "
+                "requested_at=excluded.requested_at, status=excluded.status, "
+                "note=excluded.note",
+                (device_id, email.lower(), time.time(), status, note))
+
+    def takeovers_for(self, device_id: str, status: str | None = None) -> list[sqlite3.Row]:
+        if status is None:
+            return self._q("SELECT * FROM takeovers WHERE device_id=?", (device_id,))
+        return self._q("SELECT * FROM takeovers WHERE device_id=? AND status=?",
+                       (device_id, status))
+
+    def clear_takeover(self, device_id: str, email: str) -> None:
+        self._x("DELETE FROM takeovers WHERE device_id=? AND email=?",
+                (device_id, email.lower()))
 
     def granted_mailboxes(self, device_id: str) -> list[sqlite3.Row]:
         return self._q(

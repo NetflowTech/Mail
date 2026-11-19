@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Users · AMail Admin{% endblock %}
+{% block body %}
+<h1>Users</h1>
+<p class="lede">What people did with company mailboxes on their PCs: emails opened, sent, deleted, attachments saved. Their own accounts aren't recorded, and no email contents are. Kept for {{ days }} days.</p>
+
+<form method="get" class="row-form" style="margin: 0 0 16px">
+  <label>PC
+    <select name="pc"><option value="">All PCs</option>
+    {% for d in devices %}<option value="{{ d.id }}" {{ 'selected' if d.id == pc }}>{{ d.name }}</option>{% endfor %}
+    </select></label>
+  <label>Mailbox
+    <select name="mailbox"><option value="">All mailboxes</option>
+    {% for m in mailboxes %}<option value="{{ m.email }}" {{ 'selected' if m.email|lower == mailbox }}>{{ m.email }}</option>{% endfor %}
+    </select></label>
+  <label>Day <input type="date" name="day" value="{{ day }}"></label>
+  <button>Show</button>
+  {% if pc or mailbox or day %}<a href="{{ url_for('users_page') }}" class="small">Clear</a>{% endif %}
+</form>
+
+{% if rows %}
+<table class="tbl">
+  <thead><tr><th>When</th><th>PC</th><th>Mailbox</th><th>What</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+  <tr>
+    <td class="nowrap dim">{{ r.at|when }}</td>
+    <td><a href="{{ url_for('device_page', device_id=r.pc_id) }}">{{ r.pc }}</a></td>
+    <td class="dim">{{ r.email or '–' }}</td>
+    <td>{{ r.text }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% if rows|length == 500 %}<p class="hint">Showing the latest 500. Narrow it down by PC, mailbox or day to see older entries.</p>{% endif %}
+{% else %}
+<p class="empty">Nothing recorded{% if pc or mailbox or day %} for that selection{% endif %} yet. Entries arrive within a minute of the action, while the PC is online.</p>
+{% endif %}
+{% endblock %}

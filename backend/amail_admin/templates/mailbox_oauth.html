@@ -3,18 +3,18 @@
 {% block body %}
 <p class="crumb"><a href="{{ url_for('mailboxes') }}">Mailboxes</a> /</p>
 <h1>Sign in {{ p.email }} with {{ label }}</h1>
-<section class="card">
-  <ol class="steps">
-    <li><a href="{{ p.url }}" target="_blank" rel="noopener noreferrer"><b>Open the {{ label }} sign-in page</b></a> (opens in a new tab). Sign in as <b>{{ p.email }}</b> and allow access to mail.</li>
-    <li>Your browser then shows a page that <b>can't connect</b> (an address starting with <code>{{ p.redirect }}</code>). That's expected.</li>
-    <li>Copy that page's <b>whole address</b> from the address bar and paste it here:</li>
+<p class="lede">The server checks the sign-in by logging in to the mailbox once. No password is stored: {{ label }} gives a token that AMail uses instead.</p>
+<section>
+  <ol class="howto">
+    <li><a href="{{ p.url }}" target="_blank" rel="noopener noreferrer"><b>Open the {{ label }} sign-in page</b></a> (new tab). Sign in as <b>{{ p.email }}</b> and allow access to mail.</li>
+    <li>Your browser then shows a page that <b>can't connect</b>, with an address starting <code>{{ p.redirect }}</code>. That's expected.</li>
+    <li>Copy that page's <b>whole address</b> from the address bar and paste it here.</li>
   </ol>
-  <form method="post" action="{{ url_for('mailbox_oauth_finish') }}" class="grid gap-top">
+  <form method="post" action="{{ url_for('mailbox_oauth_finish') }}" class="form">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <label class="wide">Address of the "can't connect" page
       <input name="pasted" required autocomplete="off" placeholder="{{ p.redirect }}?state=…&amp;code=…"></label>
     <div class="wide"><button class="primary">Finish</button></div>
   </form>
-  <p class="sub">The server then checks the sign-in by logging in to the mailbox. No password is stored: {{ label }} gives a token that AMail uses instead, and that you can cancel at any time by renewing the sign-in.</p>
 </section>
 {% endblock %}

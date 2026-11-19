@@ -19,6 +19,7 @@ Protections:
 from __future__ import annotations
 
 import hashlib
+import json
 import hmac
 import imaplib
 import ipaddress
@@ -28,7 +29,7 @@ import smtplib
 import socket
 import ssl
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from flask import (Flask, abort, flash, redirect, render_template, request,
                    send_file, session, url_for)
@@ -47,6 +48,129 @@ SESSION_IDLE = 30 * 60
 SESSION_MAX = 8 * 3600
 PRE_AUTH_MAX = 5 * 60          # password accepted, code not yet entered
 PUBLIC_ENDPOINTS = {"login", "login_code", "static", "certificate"}
+PAGE = 100                     # mailboxes per page
+GRID_MAX = 12                  # more mailboxes than this: the overview lists PCs
+PICK_MAX = 200                 # mailboxes offered at once on a PC's page
+MAILHOST_KEYS = ("imap_host", "imap_port", "smtp_host", "smtp_port")
+
+
+def parse_import(text: str) -> tuple[list[dict], list[str]]:
+    """Lines of ``email:password`` or ``email,password,display name``.
+    Returns (entries, bad lines)."""
+    entries, bad = [], []
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        name = ""
+        if "," in line.split(":", 1)[0] or (":" not in line and "," in line):
+            parts = [p.strip() for p in line.split(",")]
+            email, password = parts[0], parts[1] if len(parts) > 1 else ""
+            name = ", ".join(parts[2:]).strip()[:120]
+        else:
+            email, _, password = line.partition(":")
+            email, password = email.strip(), password.strip()
+        email = email.lower()
+        if not _EMAIL.match(email) or not password:
+            bad.append(raw.strip()[:80])
+            continue
+        entries.append({"email": email, "password": password, "display_name": name})
+    return entries, bad
+_USERNAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,39}$")
+STALE_AFTER = 3 * 86400        # an approved PC unseen this long is flagged
+
+# What the activity page says for each recorded action.
+ACTION_LABELS = {
+    "login": "Signed in",
+    "login_failed": "Wrong username or password",
+    "code_failed": "Wrong authenticator code",
+    "two_step_enabled": "Set up two-step sign-in",
+    "enrolled": "A PC asked to join",
+    "enroll_refused": "A PC tried to join with a wrong join code",
+    "enroll_refused_full": "A PC was turned away: too many waiting for approval",
+    "device_approved": "Approved a PC",
+    "approve_code_mismatch": "Typed a check code that didn't match",
+    "device_blocked": "Blocked a PC",
+    "device_renamed": "Renamed a PC",
+    "device_edited": "Changed a PC's name or note",
+    "device_deleted": "Removed a PC",
+    "signed_in": "Put a mailbox on a PC",
+    "signed_out": "Took a mailbox off a PC",
+    "takeover_requested": "Asked a PC to hand over an account",
+    "takeover_cancelled": "Withdrew a hand-over request",
+    "takeover_ignored": "Left an account on a PC personal",
+    "takeover_done": "A PC handed over an account",
+    "takeover_declined": "A user declined to hand over an account",
+    "mailbox_added": "Added a mailbox",
+    "mailboxes_imported": "Added mailboxes from a list",
+    "signed_out_all": "Took every mailbox off a PC",
+    "copied_mailboxes": "Copied a PC's mailboxes to another PC",
+    "mailbox_changed": "Changed a mailbox",
+    "mailbox_deleted": "Deleted a mailbox",
+    "server_address_changed": "Changed the server address",
+    "sign_in_apps_changed": "Changed the Google/Microsoft app registration",
+    "enroll_code_rotated": "Made a new join code",
+    "enrollment_opened": "Let new PCs join",
+    "enrollment_closed": "Stopped new PCs joining",
+    "admin_password_changed": "Changed their password",
+    "admin_added": "Added an admin",
+    "admin_removed": "Removed an admin",
+    "admin_two_step_reset": "Reset an admin's two-step sign-in",
+    "admin_set": "Set an admin's password from the server console",
+    "master_key_exported": "Exported the master key from the server console",
+}
+
+
+def action_label(action: str) -> str:
+    if action in ACTION_LABELS:
+        return ACTION_LABELS[action]
+    if action.startswith("mailbox_signed_in_with_"):
+        return "Signed a mailbox in with " + action.rsplit("_", 1)[1].capitalize()
+    return action.replace("_", " ").capitalize()
+
+
+def when(ts: float | None) -> str:
+    if not ts:
+        return ""
+    return datetime.fromtimestamp(ts).strftime("%a %d %b %Y, %H:%M")
+
+
+def event_text(kind: str, detail) -> str:
+    """One plain sentence for something a user did."""
+    try:
+        d = json.loads(detail) if isinstance(detail, str) else (detail or {})
+    except ValueError:
+        d = {}
+    subj = f"\u201c{d['subject']}\u201d" if d.get("subject") else "an email"
+    who = d.get("who", "")
+    name = d.get("name", "")
+    frm = f" from {who}" if who else ""
+    to = f" to {who}" if who else ""
+    return {
+        "opened": f"Opened {subj}{frm}",
+        "sent": f"Sent {subj}{to}",
+        "replied": f"Replied with {subj}{to}",
+        "deleted": f"Moved {subj}{frm} to Trash",
+        "deleted_forever": f"Deleted {subj}{frm} permanently",
+        "spam": f"Marked {subj}{frm} as spam",
+        "restored": f"Restored {subj}{frm} to the Inbox",
+        "marked_read": f"Marked {subj} as read",
+        "marked_unread": f"Marked {subj} as unread",
+        "attachment_opened": f"Opened attachment {name} from {subj}",
+        "attachment_saved": f"Saved attachment {name} from {subj}",
+        "printed": f"Printed {subj}",
+        "signed_in": "Mailbox signed in on this PC",
+        "signed_out": "Mailbox signed out of this PC",
+        "app_start": "Started AMail",
+        "app_quit": "Closed AMail",
+    }.get(kind, kind.replace("_", " ").capitalize())
+
+
+def who_label(actor: str) -> str:
+    if actor.startswith("admin:"):
+        return actor[6:]
+    return {"device": "A PC", "panel": "Someone at the sign-in page",
+            "console": "The server console"}.get(actor, actor)
 
 
 def ip_in(addr: str, networks) -> bool:
@@ -64,11 +188,15 @@ def ago(ts: float | None) -> str:
         return "never"
     s = max(0, int(time.time() - ts))
     if s < 60:
-        return f"{s}s ago"
+        return "just now"
     if s < 3600:
         return f"{s // 60} min ago"
+    if s < 7200:
+        return "1 hour ago"
     if s < 86400:
-        return f"{s // 3600} h ago"
+        return f"{s // 3600} hours ago"
+    if s < 172800:
+        return "1 day ago"
     return f"{s // 86400} days ago"
 
 
@@ -163,6 +291,7 @@ def create_panel_app(cfg: Config, store: Store, master_key: bytes,
         MAX_CONTENT_LENGTH=256 * 1024,
     )
     app.jinja_env.filters["ago"] = ago
+    app.jinja_env.filters["when"] = when
     limiter = limiter or RateLimiter()
     online_window = cfg.checkin_interval * ONLINE_FACTOR
 
@@ -261,12 +390,13 @@ def create_panel_app(cfg: Config, store: Store, master_key: bytes,
                 st = r.get("status")
                 state = {"running": ("Signed in", "ok"),
                          "paused": ("Paused on PC", "warn")}.get(
-                    st, (f"Error: {r.get('error') or st}", "bad"))
+                    st, (f"Can't sign in: {r.get('error') or st}", "bad"))
             else:
                 state = (("Signing in…", "warn") if online
                          else ("Waiting for PC to come online", "muted"))
             rows.append({"mailbox": m, "email": email, "label": state[0],
-                         "tone": state[1], "granted": True})
+                         "tone": state[1], "granted": True,
+                         "error": (r or {}).get("error") or ""})
         for email, r in report.items():
             if r.get("managed") and email not in granted:
                 rows.append({"mailbox": store.mailbox_by_email(email),
@@ -275,9 +405,21 @@ def create_panel_app(cfg: Config, store: Store, master_key: bytes,
                                        else "Signs out when the PC is next online"),
                              "tone": "warn"})
         personal = sorted(e for e, r in report.items() if not r.get("managed"))
+        takeovers = {t["email"]: t for t in store.takeovers_for(dev["id"])}
+        personal_rows = [{"email": e, "kind": report[e].get("kind") or "password",
+                          "takeover": takeovers.get(e)} for e in personal]
+        state, label, tag = {
+            "pending": ("pending", "Waiting for approval", "warn"),
+            "revoked": ("revoked", "Blocked", "bad"),
+        }.get(dev["status"], ("online", "Online", "ok") if online
+              else ("offline", "Offline", "muted"))
+        stale = (dev["status"] == "approved" and not online and granted
+                 and time.time() - (dev["last_seen"] or 0) > STALE_AFTER)
         return {"d": dev, "online": online, "accounts": rows,
-                "personal": personal,
-                "check_code": crypto.check_code(dev["public_key"])}
+                "by_email": {r["email"]: r for r in rows},
+                "personal": personal, "personal_rows": personal_rows,
+                "state": state, "state_label": label,
+                "tag": tag, "stale": stale}
 
     def mailbox_form() -> tuple[dict, str | None]:
         f = {k: (request.form.get(k) or "").strip() for k in
@@ -399,17 +541,104 @@ def create_panel_app(cfg: Config, store: Store, master_key: bytes,
     @app.get("/")
     def dashboard():
         views = [device_view(d) for d in store.devices()]
+        q = (request.args.get("q") or "").strip()[:80]
+        found = []
+        if q:
+            by_mb = store.grants_by_mailbox()
+            found = [{"m": m, "devices": by_mb.get(m["id"], [])}
+                     for m in store.mailboxes(q, 50)]
+        attention = []
+        for v in views:
+            d = v["d"]
+            if d["status"] == "pending":
+                attention.append({"kind": "pending", "v": v})
+            elif d["status"] == "approved":
+                for a in v["accounts"]:
+                    if a["tone"] == "bad":
+                        why = f" ({a['error']})" if a.get("error") else ""
+                        attention.append({
+                            "kind": "error", "v": v,
+                            "text": f"{d['name']} can't sign in to {a['email']}"
+                                    f"{why}. Usually the password was changed at "
+                                    "the mail host: update it on the mailbox's "
+                                    "page."})
+                if v["stale"]:
+                    attention.append({
+                        "kind": "stale", "v": v,
+                        "text": f"{d['name']} was last seen "
+                                f"{ago(d['last_seen'])} and still has mailboxes "
+                                "on it. Is it switched off, or disconnected?"})
+                fresh = [p["email"] for p in v["personal_rows"]
+                         if p["kind"] == "password" and p["takeover"] is None]
+                if fresh:
+                    attention.append({
+                        "kind": "personal", "v": v,
+                        "text": f"{d['name']} has {len(fresh)} account(s) its "
+                                f"user added that you don't manage: "
+                                f"{', '.join(fresh)}. Take them over, or leave "
+                                "them personal."})
+                for p in v["personal_rows"]:
+                    t = p["takeover"]
+                    if t is not None and t["status"] == "declined":
+                        attention.append({
+                            "kind": "declined", "v": v,
+                            "text": f"The person using {d['name']} declined to "
+                                    f"hand over {p['email']}"
+                                    + (f" ({t['note']})" if t["note"] else "")
+                                    + ". Ask them, then try again or leave it "
+                                    "personal."})
+        setup = {"url": bool(store.get_setting("public_url")),
+                 "mailbox": bool(store.mailboxes()),
+                 "pc": any(v["d"]["status"] == "approved" for v in views)}
+        setup["show"] = not all(setup.values())
+        total = store.mailbox_count()
         return render_template("dashboard.html", views=views,
-                               mailboxes=store.mailboxes())
+                               attention=attention, setup=setup,
+                               mailboxes=store.mailboxes() if total <= GRID_MAX else [],
+                               grid=total <= GRID_MAX, total=total, q=q, found=found)
+
+    @app.get("/pcs")
+    def pcs_page():
+        return render_template("pcs.html",
+                               views=[device_view(d) for d in store.devices()])
 
     @app.get("/devices/<device_id>")
     def device_page(device_id):
         dev = store.device(device_id) or abort(404)
         view = device_view(dev)
         granted = {r["email"] for r in view["accounts"] if r["granted"]}
-        available = [m for m in store.mailboxes()
-                     if m["email"].lower() not in granted]
-        return render_template("device.html", v=view, available=available)
+        q = (request.args.get("q") or "").strip()[:80]
+        pool = [m for m in store.mailboxes(q) if m["email"].lower() not in granted]
+        available, available_total = pool[:PICK_MAX], len(pool)
+        others = [d for d in store.devices()
+                  if d["status"] == "approved" and d["id"] != dev["id"]
+                  and store.granted_mailboxes(d["id"])]
+        recent = [{"at": e["at"], "email": e["email"],
+                   "text": event_text(e["kind"], e["detail"])}
+                  for e in store.events(device_id=device_id, limit=15)]
+        return render_template("device.html", v=view, available=available,
+                               available_total=available_total, q=q,
+                               others=others, recent=recent)
+
+    @app.get("/users")
+    def users_page():
+        device_id = (request.args.get("pc") or "").strip()
+        email = (request.args.get("mailbox") or "").strip().lower()
+        day = (request.args.get("day") or "").strip()
+        since = until = None
+        if day:
+            try:
+                start = datetime.strptime(day, "%Y-%m-%d")
+                since, until = start.timestamp(), (start + timedelta(days=1)).timestamp()
+            except ValueError:
+                day = ""
+        rows = [{"at": e["at"], "pc": e["device_name"], "pc_id": e["device_id"],
+                 "email": e["email"], "text": event_text(e["kind"], e["detail"])}
+                for e in store.events(device_id or None, email or None,
+                                      since, until, limit=500)]
+        return render_template("users.html", rows=rows, devices=store.devices(),
+                               mailboxes=store.mailboxes(), pc=device_id,
+                               mailbox=email, day=day, days=cfg.event_days)
 
     def _device_action(device_id, fn, message):
         dev = store.device(device_id) or abort(404)
@@ -442,46 +671,131 @@ def create_panel_app(cfg: Config, store: Store, master_key: bytes,
             store.audit(actor(), "device_blocked", f"{dev['name']} ({dev['id']})")
         return _device_action(
             device_id, go,
-            "{name} blocked. Every managed account is removed from it at its "
-            "next check-in.")
+            "{name} blocked. Its company mailboxes are removed within a minute "
+            "of it being online.")
 
-    @app.post("/devices/<device_id>/rename")
-    def device_rename(device_id):
+    @app.post("/devices/<device_id>/edit")
+    def device_edit(device_id):
         name = (request.form.get("name") or "").strip()[:80]
+        note = (request.form.get("note") or "").strip()[:120]
         if not name:
-            flash("Enter a name.", "bad")
+            flash("Enter a name for the PC.", "bad")
             return redirect(url_for("device_page", device_id=device_id))
 
         def go(dev):
-            store.rename_device(dev["id"], name)
-            store.audit(actor(), "device_renamed", f"{dev['name']} -> {name}")
-        return _device_action(device_id, go, "Renamed.")
+            store.rename_device(dev["id"], name, note)
+            store.audit(actor(), "device_edited",
+                        f"{dev['name']} -> {name}" + (f" ({note})" if note else ""))
+        return _device_action(device_id, go, "Saved.")
 
     @app.post("/devices/<device_id>/delete")
     def device_delete(device_id):
         dev = store.device(device_id) or abort(404)
         if dev["status"] == "approved":
-            flash("Block the PC first, and let it check in so its managed "
-                  "accounts are removed. Then delete it.", "bad")
+            flash("Block the PC first, and let it come online so its company "
+                  "mailboxes are removed. Then remove it.", "bad")
             return redirect(url_for("device_page", device_id=device_id))
         store.delete_device(device_id)
         store.audit(actor(), "device_deleted", f"{dev['name']} ({dev['id']})")
-        flash(f"{dev['name']} deleted.", "ok")
+        flash(f"{dev['name']} removed.", "ok")
         return redirect(url_for("dashboard"))
+
+    @app.post("/devices/<device_id>/takeover")
+    def device_takeover(device_id):
+        dev = store.device(device_id) or abort(404)
+        if dev["status"] != "approved":
+            flash("Approve the PC first.", "bad")
+            return redirect(url_for("device_page", device_id=device_id))
+        rows = device_view(dev)["personal_rows"]
+        if request.form.get("all"):
+            wanted = {p["email"] for p in rows if not (
+                p["takeover"] and p["takeover"]["status"] in ("pending", "ignored"))}
+        else:
+            wanted = {(request.form.get("email") or "").strip().lower()}
+        asked = []
+        for p in rows:
+            if p["email"] in wanted and p["kind"] == "password":
+                store.mark_takeover(dev["id"], p["email"], "pending")
+                asked.append(p["email"])
+        if not asked:
+            flash("Nothing to take over: that account isn't on the PC, or it "
+                  "signs in with Google or Microsoft (add those under "
+                  "Mailboxes instead).", "bad")
+        else:
+            store.audit(actor(), "takeover_requested",
+                        f"{', '.join(asked)} on {dev['name']}")
+            flash(f"The person using {dev['name']} is asked to allow it within "
+                  "a minute (when AMail is open). The result shows here.", "ok")
+        return redirect(url_for("device_page", device_id=device_id))
+
+    @app.post("/devices/<device_id>/takeover/cancel")
+    def device_takeover_cancel(device_id):
+        dev = store.device(device_id) or abort(404)
+        email = (request.form.get("email") or "").strip().lower()
+        store.clear_takeover(dev["id"], email)
+        store.audit(actor(), "takeover_cancelled", f"{email} on {dev['name']}")
+        flash("Withdrawn.", "ok")
+        return redirect(url_for("device_page", device_id=device_id))
+
+    @app.post("/devices/<device_id>/takeover/ignore")
+    def device_takeover_ignore(device_id):
+        dev = store.device(device_id) or abort(404)
+        email = (request.form.get("email") or "").strip().lower()
+        store.mark_takeover(dev["id"], email, "ignored")
+        store.audit(actor(), "takeover_ignored", f"{email} on {dev['name']}")
+        flash(f"{email} stays the user's own account on {dev['name']}.", "ok")
+        return redirect(url_for("device_page", device_id=device_id))
 
     @app.post("/devices/<device_id>/grant")
     def device_grant(device_id):
         dev = store.device(device_id) or abort(404)
         if dev["status"] != "approved":
-            flash("Approve the PC before signing it in to accounts.", "bad")
+            flash("Approve the PC before putting mailboxes on it.", "bad")
             return redirect(url_for("device_page", device_id=device_id))
-        mb = store.mailbox(int(request.form.get("mailbox_id") or 0)) or abort(404)
-        store.grant(dev["id"], mb["id"])
-        store.audit(actor(), "signed_in", f"{mb['email']} on {dev['name']}")
-        flash(f"{mb['email']} will be signed in on {dev['name']} at its next "
-              "check-in.", "ok")
+        ids = []
+        for raw in request.form.getlist("mailbox_id"):
+            try:
+                ids.append(int(raw))
+            except ValueError:
+                pass
+        boxes = [store.mailbox(i) for i in ids]
+        boxes = [m for m in boxes if m is not None]
+        if not boxes:
+            flash("Tick at least one mailbox.", "bad")
+            return redirect(url_for("device_page", device_id=device_id))
+        n = store.grant_many(dev["id"], [m["id"] for m in boxes])
+        names = ", ".join(m["email"] for m in boxes[:5]) + (" …" if len(boxes) > 5 else "")
+        store.audit(actor(), "signed_in", f"{names} on {dev['name']}"
+                    + (f" ({len(boxes)} mailboxes)" if len(boxes) > 1 else ""))
+        what = boxes[0]["email"] if len(boxes) == 1 else f"{n} mailbox(es)"
+        flash(f"{what} will be signed in on {dev['name']} within a minute, as "
+              "soon as the PC is online.", "ok")
         if request.form.get("next") == "mailbox":
-            return redirect(url_for("mailbox_page", mailbox_id=mb["id"]))
+            return redirect(url_for("mailbox_page", mailbox_id=boxes[0]["id"]))
+        return redirect(url_for("device_page", device_id=device_id))
+
+    @app.post("/devices/<device_id>/ungrant-all")
+    def device_ungrant_all(device_id):
+        dev = store.device(device_id) or abort(404)
+        n = store.revoke_all(dev["id"])
+        store.audit(actor(), "signed_out_all", f"{n} mailboxes on {dev['name']}")
+        flash(f"{n} mailbox(es) will be signed out of {dev['name']} within a "
+              "minute, as soon as the PC is online.", "ok")
+        return redirect(url_for("device_page", device_id=device_id))
+
+    @app.post("/devices/<device_id>/copy")
+    def device_copy(device_id):
+        dev = store.device(device_id) or abort(404)
+        src = store.device(request.form.get("source") or "") or abort(404)
+        if dev["status"] != "approved":
+            flash("Approve the PC before putting mailboxes on it.", "bad")
+            return redirect(url_for("device_page", device_id=device_id))
+        n = store.grant_many(dev["id"], [m["id"] for m in
+                                         store.granted_mailboxes(src["id"])])
+        store.audit(actor(), "copied_mailboxes",
+                    f"{n} from {src['name']} to {dev['name']}")
+        flash(f"{n} mailbox(es) from {src['name']} will be signed in on "
+              f"{dev['name']} within a minute, as soon as the PC is online.", "ok")
         return redirect(url_for("device_page", device_id=device_id))
 
     @app.post("/devices/<device_id>/ungrant")
@@ -490,21 +804,97 @@ def create_panel_app(cfg: Config, store: Store, master_key: bytes,
         mb = store.mailbox(int(request.form.get("mailbox_id") or 0)) or abort(404)
         store.revoke(dev["id"], mb["id"])
         store.audit(actor(), "signed_out", f"{mb['email']} on {dev['name']}")
-        flash(f"{mb['email']} will be signed out of {dev['name']} at its next "
-              "check-in.", "ok")
+        flash(f"{mb['email']} will be signed out of {dev['name']} within a "
+              "minute, as soon as the PC is online.", "ok")
         if request.form.get("next") == "mailbox":
             return redirect(url_for("mailbox_page", mailbox_id=mb["id"]))
         return redirect(url_for("device_page", device_id=device_id))
 
     # ----- mailboxes -----
 
-    def mailbox_rows():
-        return [{"m": m, "devices": store.devices_for_mailbox(m["id"])}
-                for m in store.mailboxes()]
+    def mailhost_defaults() -> dict:
+        """Server settings remembered from the last import or add, so the
+        next mailbox needs only its address and password."""
+        d = {k: store.get_setting(f"mailhost_{k}") for k in MAILHOST_KEYS}
+        d["imap_port"] = d["imap_port"] or 993
+        d["smtp_port"] = d["smtp_port"] or 465
+        return d
+
+    def remember_mailhost(f: dict) -> None:
+        for k in MAILHOST_KEYS:
+            store.set_setting(f"mailhost_{k}", str(f[k]))
+
+    def mailbox_listing(form: dict | None = None, status: int = 200):
+        q = (request.args.get("q") or "").strip()[:80]
+        only = request.args.get("only") == "none"
+        try:
+            page = max(1, int(request.args.get("page") or 1))
+        except ValueError:
+            page = 1
+        total = store.mailbox_count(q, only)
+        pages = max(1, (total + PAGE - 1) // PAGE)
+        page = min(page, pages)
+        by_mb = store.grants_by_mailbox()
+        rows = [{"m": m, "devices": by_mb.get(m["id"], [])}
+                for m in store.mailboxes(q, PAGE, (page - 1) * PAGE, only)]
+        return render_template(
+            "mailboxes.html", rows=rows, form=form or mailhost_defaults(),
+            host=mailhost_defaults(), q=q, only=only, page=page, pages=pages,
+            total=total, all_count=store.mailbox_count(),
+            none_count=store.mailbox_count(unassigned=True)), status
 
     @app.get("/mailboxes")
     def mailboxes():
-        return render_template("mailboxes.html", rows=mailbox_rows(), form={})
+        return mailbox_listing()
+
+    @app.post("/mailboxes/import")
+    def mailbox_import():
+        f = {k: (request.form.get(k) or "").strip() for k in MAILHOST_KEYS}
+        for k in ("imap_host", "smtp_host"):
+            if not _HOST.match(f[k]):
+                flash("Enter the IMAP and SMTP server names for these "
+                      "mailboxes.", "bad")
+                return redirect(url_for("mailboxes"))
+        for k in ("imap_port", "smtp_port"):
+            if not f[k].isdigit() or not 0 < int(f[k]) < 65536:
+                flash("Ports must be numbers between 1 and 65535.", "bad")
+                return redirect(url_for("mailboxes"))
+            f[k] = int(f[k])
+        entries, bad = parse_import(request.form.get("lines") or "")
+        if not entries:
+            flash("No usable lines. Use one mailbox per line: "
+                  "email:password (or email,password,display name).", "bad")
+            return redirect(url_for("mailboxes"))
+        new = [e for e in entries if not store.mailbox_by_email(e["email"])]
+        existing = len(entries) - len(new)
+        if request.form.get("test") and new:
+            e = new[0]
+            err = mailbox_tester(e["email"], e["password"], f["imap_host"],
+                                 f["imap_port"], f["smtp_host"], f["smtp_port"])
+            if err:
+                flash(f"Nothing imported. The first mailbox ({e['email']}) "
+                      f"couldn't sign in with these settings: {err}", "bad")
+                return redirect(url_for("mailboxes"))
+        for e in new:
+            mid = store.add_mailbox(e["email"], e["display_name"], f["imap_host"],
+                                    f["imap_port"], f["smtp_host"], f["smtp_port"],
+                                    b"pending")
+            store.update_mailbox(mid, display_name=e["display_name"],
+                                 imap_host=f["imap_host"], imap_port=f["imap_port"],
+                                 smtp_host=f["smtp_host"], smtp_port=f["smtp_port"],
+                                 password_enc=crypto.encrypt_stored(
+                                     master_key, e["password"], f"mailbox:{mid}"))
+        remember_mailhost(f)
+        store.audit(actor(), "mailboxes_imported",
+                    f"{len(new)} added, {existing} already there, {len(bad)} bad lines")
+        msg = f"{len(new)} mailbox(es) added."
+        if existing:
+            msg += f" {existing} were already in the list and were left as they are."
+        if bad:
+            msg += (f" {len(bad)} line(s) could not be read: "
+                    + "; ".join(bad[:5]) + (" …" if len(bad) > 5 else ""))
+        flash(msg, "ok" if new else "bad")
+        return redirect(url_for("mailboxes"))
 
     @app.post("/mailboxes/add")
     def mailbox_add():
@@ -521,7 +911,8 @@ def create_panel_app(cfg: Config, store: Store, master_key: bytes,
         if err:
             flash(err, "bad")
             f.pop("password", None)
-            return render_template("mailboxes.html", rows=mailbox_rows(), form=f), 400
+            return mailbox_listing(form=f, status=400)
+        remember_mailhost(f)
         # Insert first to get the id the ciphertext is bound to.
         mid = store.add_mailbox(f["email"], f["display_name"], f["imap_host"],
                                 f["imap_port"], f["smtp_host"], f["smtp_port"],
@@ -532,8 +923,7 @@ def create_panel_app(cfg: Config, store: Store, master_key: bytes,
                              password_enc=crypto.encrypt_stored(
                                  master_key, f["password"], f"mailbox:{mid}"))
         store.audit(actor(), "mailbox_added", f["email"])
-        flash(f"{f['email']} added. Sign it in on a PC from here or the PC's page.",
-              "ok")
+        flash(f"{f['email']} added. Now put it on a PC: pick one below.", "ok")
         return redirect(url_for("mailbox_page", mailbox_id=mid))
 
     # ----- Google / Microsoft sign-in (no mailbox password) -----
@@ -669,8 +1059,8 @@ def create_panel_app(cfg: Config, store: Store, master_key: bytes,
         store.audit(actor(), "mailbox_changed",
                     m["email"] + (" (servers)" if servers_changed else "")
                     + (" (new password)" if enc else ""))
-        flash("Saved. PCs signed in to this mailbox pick it up at their next "
-              "check-in.", "ok")
+        flash("Saved. PCs with this mailbox pick up the change within a minute, "
+              "as soon as they're online.", "ok")
         return redirect(url_for("mailbox_page", mailbox_id=mailbox_id))
 
     @app.post("/mailboxes/<int:mailbox_id>/delete")
@@ -678,8 +1068,8 @@ def create_panel_app(cfg: Config, store: Store, master_key: bytes,
         m = store.mailbox(mailbox_id) or abort(404)
         store.delete_mailbox(mailbox_id)
         store.audit(actor(), "mailbox_deleted", m["email"])
-        flash(f"{m['email']} deleted. Every PC signed in to it is signed out at "
-              "its next check-in.", "ok")
+        flash(f"{m['email']} deleted. Every PC that had it is signed out within "
+              "a minute, as soon as it's online.", "ok")
         return redirect(url_for("mailboxes"))
 
     # ----- settings / audit -----
@@ -733,7 +1123,8 @@ def create_panel_app(cfg: Config, store: Store, master_key: bytes,
         if request.form.get("rotate"):
             store.set_setting("enroll_code", crypto.new_enroll_code())
             store.audit(actor(), "enroll_code_rotated")
-            flash("New enrollment code made. The old one no longer works.", "ok")
+            flash("New join code made. The old setup code no longer works for "
+                  "new PCs.", "ok")
         else:
             on = "1" if request.form.get("open") else "0"
             store.set_setting("enroll_open", on)
@@ -759,8 +1150,83 @@ def create_panel_app(cfg: Config, store: Store, master_key: bytes,
               "too).", "ok")
         return redirect(url_for("login"))
 
+    # ----- admins -----
+
+    def own_password_ok() -> bool:
+        row = store.get_admin(request.admin)
+        return bool(row) and crypto.check_password(
+            request.form.get("confirm") or "", row["pw_hash"])
+
+    @app.get("/admins")
+    def admins_page():
+        return render_template("admins.html", admins=store.list_admins(),
+                               me=request.admin)
+
+    @app.post("/admins/add")
+    def admin_add():
+        name = (request.form.get("username") or "").strip()
+        pw = request.form.get("password") or ""
+        if not _USERNAME.match(name):
+            flash("The username needs 2 to 40 letters, digits, dots, dashes or "
+                  "underscores.", "bad")
+        elif store.get_admin(name):
+            flash(f"{name} is already an admin.", "bad")
+        elif len(pw) < 12:
+            flash("Use at least 12 characters for their password.", "bad")
+        elif not own_password_ok():
+            flash("Your own password is wrong. Type it to confirm adding an "
+                  "admin.", "bad")
+        else:
+            store.set_admin(name, crypto.hash_password(pw))
+            store.audit(actor(), "admin_added", name)
+            flash(f"{name} added. They set up two-step sign-in the first time "
+                  "they sign in.", "ok")
+        return redirect(url_for("admins_page"))
+
+    @app.post("/admins/remove")
+    def admin_remove():
+        name = (request.form.get("username") or "").strip()
+        row = store.get_admin(name) if name else None
+        if row is None:
+            flash("That admin doesn't exist.", "bad")
+        elif row["username"].lower() == (request.admin or "").lower():
+            flash("You can't remove yourself. Ask another admin to.", "bad")
+        elif store.admin_count() <= 1:
+            flash("There has to be at least one admin.", "bad")
+        elif not own_password_ok():
+            flash("Your own password is wrong. Type it to confirm removing an "
+                  "admin.", "bad")
+        else:
+            store.delete_admin(row["username"])
+            store.audit(actor(), "admin_removed", row["username"])
+            flash(f"{row['username']} removed and signed out.", "ok")
+        return redirect(url_for("admins_page"))
+
+    @app.post("/admins/reset-two-step")
+    def admin_reset_two_step():
+        name = (request.form.get("username") or "").strip()
+        row = store.get_admin(name) if name else None
+        if row is None:
+            flash("That admin doesn't exist.", "bad")
+        elif not own_password_ok():
+            flash("Your own password is wrong. Type it to confirm the reset.",
+                  "bad")
+        else:
+            store.set_totp(row["username"], "", 0)
+            store.end_sessions(row["username"])
+            store.audit(actor(), "admin_two_step_reset", row["username"])
+            flash(f"{row['username']} sets up two-step sign-in again at their "
+                  "next sign-in. Their open sessions were ended.", "ok")
+            if row["username"].lower() == (request.admin or "").lower():
+                session.clear()
+                return redirect(url_for("login"))
+        return redirect(url_for("admins_page"))
+
     @app.get("/audit")
     def audit_page():
-        return render_template("audit.html", rows=store.audit_log())
+        rows = [{"at": r["at"], "who": who_label(r["actor"]),
+                 "what": action_label(r["action"]), "detail": r["detail"]}
+                for r in store.audit_log()]
+        return render_template("audit.html", rows=rows)
 
     return app

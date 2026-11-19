@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QFileDialo
                                QMessageBox, QPushButton, QSizePolicy, QSplitter,
                                QTabBar, QToolBar, QVBoxLayout, QWidget)
 
+from .. import activity
 from .. import (approval, attachment_safety, backup, credentials, fleet,
                 google_oauth, notify, oauth, org, outbox_preview, send_errors)
 from ..license import LicenseManager
@@ -403,7 +404,15 @@ class MainWindow(QMainWindow):
         self._org_failed_last = False   # last check-in got no answer
         self._org_timer = QTimer(self)
         self._org_timer.setInterval(30_000)
+        # Hand-over of accounts the user added: queued here by _handle_collect
+        # (GUI thread), sent by the next check-in (worker thread).
+        self._org_lock = threading.Lock()
+        self._org_handover: list[dict] = []
+        self._org_declined: list[dict] = []
+        self._org_collect_seen: set[str] = set()
         self._org_timer.timeout.connect(self._org_tick)
+        activity.bind(self.db)
+        activity.record("", "app_start")
         if org.is_joined():
             self._org_timer.start()
             QTimer.singleShot(3000, self._org_tick)
@@ -1259,6 +1268,8 @@ class MainWindow(QMainWindow):
     def _on_mark_read(self, ids: list[int], read: bool):
         for msg_id in ids:
             (self.db.mark_read if read else self.db.mark_unread)(msg_id)
+            activity.record_message(self.db.get_message(msg_id),
+                                    "marked_read" if read else "marked_unread")
         self.msg_list.refresh()
         self.sidebar.refresh()
 
@@ -1472,16 +1483,29 @@ class MainWindow(QMainWindow):
             managed = org.is_managed(a.email)
             snapshot.append({
                 "email": a.email.lower(), "managed": managed,
+                "kind": org.auth_kind(a.email) if managed else self._account_kind(a),
                 "version": org.held_version(a.email) if managed else 0,
                 "status": self._account_status(a),
                 "error": ("Sign-in failed" if a.id in self.engine.auth_failed
                           else "")})
         from .. import __version__
+        with self._org_lock:
+            handover = list(self._org_handover)[:100]   # the server's limit per call
+            declined = list(self._org_declined)[:100]
+        events, taken = activity.take()
 
         def work():
             resp = None
             try:
-                resp = org.checkin(snapshot, __version__)
+                resp = org.checkin(snapshot, __version__, handover, declined,
+                                   events)
+                if resp is not None:
+                    activity.ack(taken)
+                    with self._org_lock:
+                        self._org_handover = [h for h in self._org_handover
+                                              if h not in handover]
+                        self._org_declined = [d for d in self._org_declined
+                                              if d not in declined]
             finally:
                 self._org_failed_last = resp is None
                 self._org_busy = False
@@ -1526,6 +1550,8 @@ class MainWindow(QMainWindow):
                 "Organization server reached: company mailboxes resumed", 8000)
 
     def _drop_managed_accounts(self, emails: set[str]) -> int:
+        for e in emails:
+            activity.record(e, "signed_out")
         ids = [a.id for a in self.db.list_accounts() if a.email.lower() in emails]
         if ids:
             self._remove_accounts(ids)
@@ -1544,6 +1570,92 @@ class MainWindow(QMainWindow):
             self._apply_org_inner(resp)
         finally:
             self._org_applying = False
+
+    def _account_kind(self, a) -> str:
+        """How a personal account signs in: password, google or microsoft."""
+        if a.provider == "outlook":
+            return "microsoft"
+        if a.provider == "gmail" and google_oauth.has_login(a.email):
+            return "google"
+        return "password"
+
+    def _confirm_handover(self, emails: list[str]) -> bool:
+        """One question for every account asked for at once: a PC with thirty
+        company accounts gets one dialog, not thirty."""
+        many = len(emails) > 1
+        listing = "\n".join(f"    {e}" for e in emails[:40])
+        if len(emails) > 40:
+            listing += f"\n    … and {len(emails) - 40} more"
+        reply = QMessageBox.question(
+            self, "Organization",
+            f"Your organization ({org.server_url()}) asks to manage "
+            f"{'these accounts' if many else 'this account'} on this PC:\n\n"
+            f"{listing}\n\n"
+            f"If you allow it, the password{'s' if many else ''} saved on this "
+            f"PC for {'them' if many else 'it'} "
+            f"{'are' if many else 'is'} sent to your organization's server and "
+            "removed from this PC. Your administrator manages "
+            f"{'them' if many else 'it'} from then on and can sign "
+            f"{'them' if many else 'it'} out. Your downloaded email stays.\n\n"
+            f"Only allow this if {'these are' if many else 'this is'} your work "
+            f"account{'s' if many else ''} and you expected it.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        return reply == QMessageBox.StandardButton.Yes
+
+    def _queue_declined(self, email: str, reason: str) -> None:
+        with self._org_lock:
+            self._org_declined.append({"email": email, "reason": reason})
+
+    def _handle_collect(self, resp: dict) -> None:
+        """The administrator asked for accounts the user added here to be
+        handed over. Ask once per request; send the answer at once."""
+        wanted = [str(e).lower() for e in (resp.get("collect") or [])
+                  if "@" in str(e)][:500]
+        # A request the server dropped (answered, or withdrawn) may be asked
+        # again later; a hand-over the server never confirmed is forgotten.
+        self._org_collect_seen &= set(wanted)
+        for e in org.handed():
+            if e not in wanted and not org.is_managed(e):
+                org.set_handed(e, False)
+        if not wanted:
+            return
+        local = {a.email.lower(): a for a in self.db.list_accounts()}
+        askable: list[tuple[str, object, str]] = []
+        for email in wanted:
+            if email in self._org_collect_seen or email in org.handed():
+                continue
+            self._org_collect_seen.add(email)
+            acc = local.get(email)
+            if acc is None or org.is_managed(email):
+                self._queue_declined(email, "not on this PC")
+                continue
+            kind = self._account_kind(acc)
+            password = credentials.get_password(email) if kind == "password" else None
+            if not password:
+                self._queue_declined(email, {
+                    "google": "signs in with Google",
+                    "microsoft": "signs in with Microsoft"}.get(
+                        kind, "no saved password on the PC"))
+                continue
+            askable.append((email, acc, password))
+        queued = False
+        if askable:
+            allowed = self._confirm_handover([e for e, _, _ in askable])
+            for email, acc, password in askable:
+                if not allowed:
+                    self._queue_declined(email, "the user said no")
+                    continue
+                with self._org_lock:
+                    self._org_handover.append({
+                        "email": email, "password": password,
+                        "display_name": acc.name, "imap_host": acc.imap_host,
+                        "imap_port": acc.imap_port, "smtp_host": acc.smtp_host,
+                        "smtp_port": acc.smtp_port})
+                org.set_handed(email, True)
+                queued = True
+        if queued or self._org_declined:
+            QTimer.singleShot(0, self._org_tick)     # don't wait for the timer
 
     def _confirm_take_over(self, email: str) -> bool:
         """The organization wants to manage an account the user added
@@ -1608,9 +1720,11 @@ class MainWindow(QMainWindow):
             fresh = False
             personal = local.get(email) is not None and not org.is_managed(email)
             if personal and box:
-                if email in org.declined():
+                if email in org.handed():
+                    org.set_handed(email, False)   # the user agreed when handing it over
+                elif email in org.declined():
                     continue
-                if not self._confirm_take_over(email):
+                elif not self._confirm_take_over(email):
                     org.set_declined(email, True)
                     continue
             if box:
@@ -1635,6 +1749,7 @@ class MainWindow(QMainWindow):
                 except sqlite3.IntegrityError:
                     continue
                 self.engine.start_account(new)
+                activity.record(email, "signed_in")
                 added += 1
             elif fresh:
                 # New password or server settings (or a personal account the
@@ -1649,6 +1764,8 @@ class MainWindow(QMainWindow):
                 self.db.set_account_provider(acc.id, org.APP_PROVIDER[cfg["auth"]])
                 # A password the user typed before is no longer needed.
                 credentials.delete_stored_password(email)
+                if personal:
+                    activity.record(email, "signed_in")
                 self.engine.stop_account(acc.id)
                 fresh_acc = next((a for a in self.db.list_accounts()
                                   if a.id == acc.id), None)
@@ -1667,6 +1784,7 @@ class MainWindow(QMainWindow):
         if parts:
             self.statusBar().showMessage(
                 "Organization: " + ", ".join(parts), 8000)
+        self._handle_collect(resp)
 
     def _remove_accounts(self, acc_ids: list[int]):
         """Stop each account's worker and delete all its data. Shared by the
@@ -1931,6 +2049,7 @@ class MainWindow(QMainWindow):
         m = self.db.get_message(msg_id)
         if m:
             self.reader.show_message(m, self._accent_for(m.account_id))  # render first — feels instant
+            activity.record_message(m, "opened")
             self.msg_list.mark_item_read(msg_id)  # clear bold in place, no rebuild
             self.db.mark_read(msg_id)
             self.db.mark_notifications_read_for_message(msg_id)
@@ -2017,6 +2136,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Attachment",
                                 "That attachment file is no longer available.")
             return
+        activity.record_message(getattr(self.reader, "_current", None),
+                                "attachment_opened", name=os.path.basename(real))
         from .. import eml
         if eml.is_eml(real):
             # An attached email opens AS an email, like every other client —
@@ -2059,6 +2180,8 @@ class MainWindow(QMainWindow):
                                 "That attachment file is no longer available.")
             return
         name = os.path.basename(real)
+        activity.record_message(getattr(self.reader, "_current", None),
+                                "attachment_saved", name=name)
         downloads = os.path.join(os.path.expanduser("~"), "Downloads")
         start = os.path.join(downloads if os.path.isdir(downloads)
                              else os.path.expanduser("~"), name)
@@ -2332,6 +2455,7 @@ class MainWindow(QMainWindow):
         if self._shutdown_done:
             return
         self._shutdown_done = True
+        activity.record("", "app_quit")
         # Stop the background pollers so no new daemon thread is spawned (and so
         # a late heartbeat can't emit a signal onto a torn-down window).
         for t in ("_fleet_timer", "_approval_timer", "_watchdog_timer",

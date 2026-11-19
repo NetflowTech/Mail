@@ -1,33 +1,112 @@
 {% extends "base.html" %}
-{% block title %}PCs · AMail Admin{% endblock %}
+{% block title %}Overview · AMail Admin{% endblock %}
 {% block body %}
-<h1>PCs</h1>
-{% if not views %}
-<div class="card empty">
-  <p>No PCs yet. Open <a href="{{ url_for('settings_page') }}">Settings</a>, copy the setup code,
-  and paste it into AMail on a PC under <b>Settings → Organization</b>.</p>
+<h1>Overview</h1>
+<p class="lede">Which mailboxes are signed in on which PCs, right now. Open a PC to sign it in or out.</p>
+
+{% if setup.show %}
+<div class="attention">
+  <h2>Set up in three steps</h2>
+  <ol class="steps">
+    <li class="{{ 'done' if setup.url }}"><span>Tell the server its own address, so PCs know where to find it. <a href="{{ url_for('settings_page') }}">Settings</a></span></li>
+    <li class="{{ 'done' if setup.mailbox }}"><span>Add the first company mailbox. <a href="{{ url_for('mailboxes') }}">Mailboxes</a></span></li>
+    <li class="{{ 'done' if setup.pc }}"><span>Add a PC: copy the setup code from <a href="{{ url_for('settings_page') }}">Settings</a> and paste it into AMail on that PC. The PC then appears here, waiting for your approval.</span></li>
+  </ol>
 </div>
 {% endif %}
-{% for v in views %}
-<a class="card device {{ v.d.status }}" href="{{ url_for('device_page', device_id=v.d.id) }}">
-  <div class="row">
-    <div>
-      <div class="name">{{ v.d.name }}</div>
-      <div class="sub">{{ v.d.os or 'Unknown OS' }} · last check-in {{ v.d.last_seen|ago }}{% if v.d.last_ip %} from {{ v.d.last_ip }}{% endif %}</div>
-    </div>
-    <div class="tags">
-      {% if v.d.status == 'pending' %}<span class="tag warn">Waiting for approval</span>
-      {% elif v.d.status == 'revoked' %}<span class="tag bad">Blocked</span>
-      {% elif v.online %}<span class="tag ok">Online</span>
-      {% else %}<span class="tag muted">Offline</span>{% endif %}
-    </div>
-  </div>
-  {% if v.accounts %}
-  <ul class="accounts">
-    {% for a in v.accounts %}<li><span class="dot {{ a.tone }}"></span>{{ a.email }} <em>{{ a.label }}</em></li>{% endfor %}
+
+{% if attention %}
+<div class="attention">
+  <h2>Needs you</h2>
+  <ul>
+  {% for item in attention %}
+    <li>
+      {% if item.kind == 'pending' %}
+      <div class="what"><b>{{ item.v.d.name }}</b> wants to join. <span class="dim">On that PC, open AMail → Settings → Organization and read the check code it shows.</span></div>
+      <form method="post" action="{{ url_for('device_approve', device_id=item.v.d.id) }}">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input name="check_code" placeholder="Check code" maxlength="12" required autocomplete="off" aria-label="Check code shown on {{ item.v.d.name }}">
+        <button class="primary small">Approve</button>
+      </form>
+      {% else %}
+      <div class="what">{{ item.text }}</div>
+      <a href="{{ url_for('device_page', device_id=item.v.d.id) }}">Open {{ item.v.d.name }}</a>
+      {% endif %}
+    </li>
+  {% endfor %}
   </ul>
-  {% elif v.d.status == 'approved' %}<p class="sub">No managed accounts.</p>{% endif %}
-  {% if v.personal %}<p class="sub">Added by the user: {{ v.personal|join(', ') }}</p>{% endif %}
-</a>
-{% endfor %}
+</div>
+{% endif %}
+
+{% if not grid and (views or q) %}
+<form method="get" class="row-form" style="margin: 0 0 16px">
+  <label>Find a mailbox <input name="q" value="{{ q }}" placeholder="address or name"></label>
+  <button>Find</button>
+  {% if q %}<a href="{{ url_for('dashboard') }}" class="small">Clear</a>{% endif %}
+</form>
+{% if q %}
+{% if found %}
+<table class="tbl">
+  <thead><tr><th>Mailbox</th><th>Signed in on</th></tr></thead>
+  <tbody>
+  {% for r in found %}
+  <tr>
+    <td><a class="strong" href="{{ url_for('mailbox_page', mailbox_id=r.m.id) }}">{{ r.m.email }}</a>{% if r.m.display_name %}<span class="sub">{{ r.m.display_name }}</span>{% endif %}</td>
+    <td>{% for d in r.devices %}<a href="{{ url_for('device_page', device_id=d.id) }}">{{ d.name }}</a>{{ ', ' if not loop.last }}{% else %}<span class="dim">no PC</span>{% endfor %}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="empty">No mailbox matches "{{ q }}".</p>{% endif %}
+{% endif %}
+{% endif %}
+
+{% if views and grid %}
+<div class="scroll">
+<table class="tbl grid-tbl">
+  <thead>
+    <tr>
+      <th>PC</th>
+      <th>Status</th>
+      {% for m in mailboxes %}<th class="mb" title="{{ m.email }}">{{ m.email.split('@')[0] }}<wbr>@{{ m.email.split('@')[-1] }}</th>{% endfor %}
+      <th>Other accounts on the PC</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for v in views %}
+    <tr class="{{ v.d.status }}">
+      <td><a class="strong" href="{{ url_for('device_page', device_id=v.d.id) }}">{{ v.d.name }}</a>{% if v.d.note %}<span class="sub">{{ v.d.note }}</span>{% endif %}</td>
+      <td><span class="st {{ v.tag }}">{{ v.state_label }}</span>{% if v.d.status != 'pending' %}<span class="sub">{{ v.d.last_seen|ago }}</span>{% endif %}</td>
+      {% for m in mailboxes %}
+        {% set a = v.by_email.get(m.email|lower) %}
+        {% if a %}<td class="cell"><span class="st {{ a.tone }}">{{ a.label }}</span></td>
+        {% else %}<td class="none">–</td>{% endif %}
+      {% endfor %}
+      <td class="other">{{ v.personal|join(', ') }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% if not mailboxes %}<p class="hint">No mailboxes yet. <a href="{{ url_for('mailboxes') }}">Add some</a>, then sign PCs in to them.</p>{% endif %}
+{% elif views %}
+<table class="tbl">
+  <thead><tr><th>PC</th><th>Status</th><th>Mailboxes</th><th>Problems</th><th>Other accounts on the PC</th></tr></thead>
+  <tbody>
+  {% for v in views %}
+    {% set bad = v.accounts|selectattr('tone', 'equalto', 'bad')|list %}
+    <tr class="{{ v.d.status }}">
+      <td><a class="strong" href="{{ url_for('device_page', device_id=v.d.id) }}">{{ v.d.name }}</a>{% if v.d.note %}<span class="sub">{{ v.d.note }}</span>{% endif %}</td>
+      <td><span class="st {{ v.tag }}">{{ v.state_label }}</span>{% if v.d.status != 'pending' %}<span class="sub">{{ v.d.last_seen|ago }}</span>{% endif %}</td>
+      <td>{% if v.accounts %}<b>{{ v.accounts|length }}</b> <span class="dim">{{ v.accounts[:4]|map(attribute='email')|join(', ') }}{% if v.accounts|length > 4 %}, +{{ v.accounts|length - 4 }} more{% endif %}</span>{% else %}<span class="dim">none</span>{% endif %}</td>
+      <td>{% if bad %}<span class="st bad">{{ bad|length }} can't sign in</span>{% else %}<span class="dim">–</span>{% endif %}</td>
+      <td class="dim small">{{ v.personal|join(', ') }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="hint">{{ total }} mailboxes in all. The per-mailbox grid is shown when there are 12 or fewer; use <b>Find a mailbox</b> above or a PC's page instead.</p>
+{% elif not setup.show %}
+<p class="empty">No PCs yet.</p>
+{% endif %}
 {% endblock %}

@@ -159,13 +159,15 @@ def cmd_run(_args) -> int:
 
     import time as _time
     app.store.prune_audit(_time.time() - 400 * 86400)   # keep about 13 months
+    app.store.prune_events(_time.time() - cfg.event_days * 86400)
     servers = []
     for host, port, wsgi_app, threads in (
             (cfg.device_host, cfg.device_port,
              create_device_app(app.store, app.master, cfg.checkin_interval,
                                app.signing_key,
                                trusted_proxies=cfg.trusted_proxies,
-                               oauth_clients=lambda: oauth_clients(app.store)), 40),
+                               oauth_clients=lambda: oauth_clients(app.store),
+                               event_retention=cfg.event_days * 86400), 40),
             (cfg.admin_host, cfg.admin_port,
              create_panel_app(cfg, app.store, app.master, app.session_key,
                               app.signing_pub), 10)):

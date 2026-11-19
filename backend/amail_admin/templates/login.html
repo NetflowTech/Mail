@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% block title %}Sign in · AMail Admin{% endblock %}
-{% block body %}
-<form method="post" class="card narrow login">
+{% block login %}
+<form method="post" class="login">
   <h1>AMail Admin</h1>
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <label>Username <input name="username" autocomplete="username" required autofocus></label>
   <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
   <button class="primary">Sign in</button>
-  <p class="sub">Browser warns about this page? Install <a href="{{ url_for('certificate') }}">this server's certificate</a> as trusted on your admin PC once, instead of clicking past the warning (see the README).</p>
+  <details class="help"><summary>Browser warning about this page?</summary><p>This server uses its own certificate. Install <a href="{{ url_for('certificate') }}">the certificate</a> as trusted on your admin PC once, and the warning goes away for good. The README explains how.</p></details>
 </form>
 {% endblock %}

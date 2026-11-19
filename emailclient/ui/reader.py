@@ -627,6 +627,8 @@ class ReaderPane(QWidget):
         if self._current is None:
             return
         from . import print_util
+        from .. import activity
+        activity.record_message(self._current, "printed")
         print_util.show_email_preview(self, self.webview, "Print email")
 
     # Kept as the button's slot name; both call the same thing.

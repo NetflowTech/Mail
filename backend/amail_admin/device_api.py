@@ -2,8 +2,18 @@
 
 POST /api/v1/enroll   {code, name, os, public_key}
                       -> {device_id, token, state, interval, lease}
-POST /api/v1/checkin  Bearer token; {app_version, accounts:[...]}
-                      -> {state, interval, managed:[...], lease, new_token?}
+POST /api/v1/checkin  Bearer token; {app_version, accounts:[...],
+                                     handover:[...]?, declined:[...]?,
+                                     events:[...]?}
+                      -> {state, interval, managed:[...], lease, new_token?,
+                          collect:[...]}
+
+`collect` names accounts the user added on the PC that the admin wants to
+take over. AMail asks the user; on a yes it sends the account's saved
+password and servers in `handover` (the server stores the password encrypted
+and the account becomes a company mailbox signed in on that PC), on a no it
+sends `declined`. A handover is only accepted for an account the admin asked
+for, so a PC can't push mailboxes into the panel on its own.
 
 The check-in answer is declarative: `managed` is the full list of mailboxes
 this PC should have right now. The PC adds what's new, updates what changed
@@ -17,7 +27,9 @@ from __future__ import annotations
 
 import hmac
 import ipaddress
+import json
 import logging
+import re
 import secrets
 import time
 
@@ -30,6 +42,10 @@ from .store import Store
 log = logging.getLogger(__name__)
 
 MAX_NAME = 80
+MAX_HANDOVER = 100                  # per check-in; the PC queues the rest
+MAX_EVENTS = 500                    # per check-in
+EVENT_DETAIL_KEYS = ("subject", "who", "name", "folder")
+_HOST = re.compile(r"^[A-Za-z0-9.-]{1,253}$")
 MAX_ACCOUNTS_REPORTED = 200
 MAX_PENDING = 50                    # waiting PCs; more are refused
 PENDING_EXPIRY = 7 * 86400          # a request nobody approves goes away
@@ -42,13 +58,16 @@ def _clip(v, n: int) -> str:
 
 def create_device_app(store: Store, master_key: bytes, checkin_interval: int,
                       signing_key, limiter: RateLimiter | None = None,
-                      trusted_proxies: tuple = (), oauth_clients=None) -> Flask:
+                      trusted_proxies: tuple = (), oauth_clients=None,
+                      event_retention: float = 90 * 86400) -> Flask:
     """*oauth_clients*: provider -> {"id", "secret"}, read per request (the
-    admin can change them in Settings)."""
+    admin can change them in Settings). *event_retention*: seconds the record
+    of what users did is kept."""
+    last_prune = [0.0]
     from . import oauth as _oauth
     oauth_clients = oauth_clients or (lambda: _oauth.DEFAULT_CLIENTS)
     app = Flask(__name__)
-    app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
+    app.config["MAX_CONTENT_LENGTH"] = 256 * 1024
     limiter = limiter or RateLimiter()
 
     def client_ip() -> str:
@@ -118,6 +137,92 @@ def create_device_app(store: Store, master_key: bytes, checkin_interval: int,
         return jsonify(device_id=device_id, token=token, state="pending",
                        interval=checkin_interval, lease=lease_for(device_id))
 
+    def store_events(device, body: dict) -> None:
+        """What the PC's user did with company mailboxes since last time.
+        Only for mailboxes this server knows (the PC filters personal ones
+        out; this makes sure), and only a few words each."""
+        raw = body.get("events") or []
+        if not isinstance(raw, list) or not raw:
+            return
+        known = {m["email"].lower() for m in store.mailboxes()}
+        now = time.time()
+        rows = []
+        for ev in raw[:MAX_EVENTS]:
+            if not isinstance(ev, dict):
+                continue
+            email = _clip(ev.get("email"), 254).strip().lower()
+            kind = _clip(ev.get("kind"), 32).strip()
+            if not kind or (email and email not in known) \
+                    or (not email and not kind.startswith("app_")):
+                continue
+            try:
+                at = float(ev.get("t"))
+            except (TypeError, ValueError):
+                at = now
+            at = min(max(at, now - event_retention), now + 300)
+            detail = ev.get("detail") if isinstance(ev.get("detail"), dict) else {}
+            detail = {k: _clip(detail.get(k), 200) for k in EVENT_DETAIL_KEYS
+                      if detail.get(k)}
+            rows.append((at, email, kind, json.dumps(detail)))
+        if rows:
+            store.add_events(device["id"], rows)
+        if now - last_prune[0] > 3600:
+            last_prune[0] = now
+            store.prune_events(now - event_retention)
+
+    def handle_takeovers(device, body: dict) -> None:
+        """Accounts the user agreed to hand over, and ones they declined."""
+        pending = {t["email"] for t in store.takeovers_for(device["id"], "pending")}
+        for h in (body.get("handover") or [])[:MAX_HANDOVER]:
+            if not isinstance(h, dict):
+                continue
+            email = _clip(h.get("email"), 254).strip().lower()
+            if email not in pending:
+                continue            # only what the admin asked for
+            existing = store.mailbox_by_email(email)
+            if existing is not None:
+                # Already a company mailbox (handed over from another PC, or
+                # added by the admin): the PC's copy of the password isn't
+                # needed, just sign this PC in to it.
+                store.grant(device["id"], existing["id"])
+                store.mark_takeover(device["id"], email, "done",
+                                    "already a company mailbox")
+                store.audit("device", "takeover_done",
+                            f"{email} on {device['name']} (existing mailbox)")
+                continue
+            password = str(h.get("password") or "")[:512]
+            imap_host = _clip(h.get("imap_host"), 253).strip()
+            smtp_host = _clip(h.get("smtp_host"), 253).strip()
+            try:
+                imap_port, smtp_port = int(h.get("imap_port")), int(h.get("smtp_port"))
+            except (TypeError, ValueError):
+                imap_port = smtp_port = 0
+            if (not password or not _HOST.match(imap_host) or not _HOST.match(smtp_host)
+                    or not 0 < imap_port < 65536 or not 0 < smtp_port < 65536):
+                store.mark_takeover(device["id"], email, "failed",
+                                    "the PC sent unusable settings")
+                continue
+            name = _clip(h.get("display_name"), 120).strip()
+            mid = store.add_mailbox(email, name, imap_host, imap_port, smtp_host,
+                                    smtp_port, b"pending")
+            store.update_mailbox(mid, display_name=name, imap_host=imap_host,
+                                 imap_port=imap_port, smtp_host=smtp_host,
+                                 smtp_port=smtp_port,
+                                 password_enc=crypto.encrypt_stored(
+                                     master_key, password, f"mailbox:{mid}"))
+            store.grant(device["id"], mid)
+            store.mark_takeover(device["id"], email, "done")
+            store.audit("device", "takeover_done", f"{email} from {device['name']}")
+        for d in (body.get("declined") or [])[:MAX_HANDOVER]:
+            if not isinstance(d, dict):
+                continue
+            email = _clip(d.get("email"), 254).strip().lower()
+            if email in pending:
+                store.mark_takeover(device["id"], email, "declined",
+                                    _clip(d.get("reason"), 120))
+                store.audit("device", "takeover_declined",
+                            f"{email} on {device['name']}")
+
     @app.post("/api/v1/checkin")
     def checkin():
         ip = client_ip()
@@ -146,7 +251,8 @@ def create_device_app(store: Store, master_key: bytes, checkin_interval: int,
             entry = {"email": email,
                      "status": _clip(a.get("status"), 20),
                      "error": _clip(a.get("error"), 200),
-                     "managed": bool(a.get("managed"))}
+                     "managed": bool(a.get("managed")),
+                     "kind": _clip(a.get("kind"), 12) or "password"}
             reported.append(entry)
             if entry["managed"]:
                 try:
@@ -171,6 +277,11 @@ def create_device_app(store: Store, master_key: bytes, checkin_interval: int,
         state = device["status"]
         if state != "approved":
             return jsonify(state=state, managed=[], **out)
+
+        handle_takeovers(device, body)
+        store_events(device, body)
+        out["collect"] = sorted(t["email"] for t in
+                                store.takeovers_for(device["id"], "pending"))
 
         managed = []
         for m in store.granted_mailboxes(device["id"]):

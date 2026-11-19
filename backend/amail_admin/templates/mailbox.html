@@ -3,15 +3,18 @@
 {% block body %}
 <p class="crumb"><a href="{{ url_for('mailboxes') }}">Mailboxes</a> /</p>
 <h1>{{ m.email }}</h1>
+<p class="lede">{% if m.display_name %}{{ m.display_name }}. {% endif %}{% if m.auth == 'google' %}Google sign-in.{% elif m.auth == 'microsoft' %}Microsoft sign-in.{% else %}{{ m.imap_host }}.{% endif %}</p>
 
-<section class="card">
+<section>
   <h2>Signed in on</h2>
   {% if on %}
-  <table>
+  <table class="tbl">
+    <thead><tr><th>PC</th><th>Status</th><th></th></tr></thead>
+    <tbody>
     {% for d in on %}
     <tr>
-      <td><a href="{{ url_for('device_page', device_id=d.id) }}">{{ d.name }}</a></td>
-      <td>{% if online(d) %}<span class="tag ok">Online</span>{% else %}<span class="tag muted">Offline</span>{% endif %}</td>
+      <td><a class="strong" href="{{ url_for('device_page', device_id=d.id) }}">{{ d.name }}</a>{% if d.note %}<span class="sub">{{ d.note }}</span>{% endif %}</td>
+      <td>{% if online(d) %}<span class="st ok">Online</span>{% else %}<span class="st off">Offline</span>{% endif %}</td>
       <td class="act"><form method="post" action="{{ url_for('device_ungrant', device_id=d.id) }}">
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <input type="hidden" name="mailbox_id" value="{{ m.id }}">
@@ -20,53 +23,55 @@
       </form></td>
     </tr>
     {% endfor %}
+    </tbody>
   </table>
-  {% else %}<p class="sub">Not signed in on any PC.</p>{% endif %}
+  {% else %}<p class="dim">No PC yet.</p>{% endif %}
   {% if others %}
-  <div class="grant">
+  <div class="actions">
     {% for d in others %}
     <form method="post" action="{{ url_for('device_grant', device_id=d.id) }}" class="inline">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="mailbox_id" value="{{ m.id }}">
       <input type="hidden" name="next" value="mailbox">
-      <button>Sign in on {{ d.name }}</button>
+      <button class="small">Sign in on {{ d.name }}</button>
     </form>
     {% endfor %}
   </div>
-  {% endif %}
+  {% elif not on %}<p class="hint">No approved PC to put it on yet. <a href="{{ url_for('settings_page') }}">Add a PC</a>.</p>{% endif %}
 </section>
 
 {% if m.auth != 'password' %}
-<section class="card">
-  <h2>{{ 'Google' if m.auth == 'google' else 'Microsoft' }} sign-in</h2>
-  <p>This mailbox signs in with {{ 'Google' if m.auth == 'google' else 'Microsoft' }}. No password is stored.</p>
+{% set who = 'Google' if m.auth == 'google' else 'Microsoft' %}
+<section>
+  <h2>{{ who }} sign-in</h2>
+  <p class="dim">No password is stored. Renewing replaces the sign-in on every PC that has this mailbox.{% if m.auth == 'google' %} The old sign-in is cancelled at Google, so a copy taken off a PC stops working.{% else %} To cut off an old copy at Microsoft, change the account's password there (that ends all its sign-ins), then renew here.{% endif %}</p>
   <form method="post" action="{{ url_for('mailbox_oauth_start') }}" class="inline">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <input type="hidden" name="mailbox_id" value="{{ m.id }}">
     <button name="provider" value="{{ m.auth }}">Renew sign-in</button>
   </form>
-  <p class="sub">Renewing replaces the sign-in on every PC that's signed in to it.{% if m.auth == 'google' %} The old one is cancelled at Google, so a copy taken off a PC stops working.{% else %} To cut off an old copy at Microsoft, change the account's password (that ends all its sign-ins), then renew here.{% endif %}</p>
 </section>
 {% else %}
-<section class="card">
-  <h2>Settings</h2>
+<section>
+  <h2>Mail server and password</h2>
   {% set form = m %}{% set lock_email = true %}
-  <form method="post" action="{{ url_for('mailbox_edit', mailbox_id=m.id) }}" class="grid">
+  <form method="post" action="{{ url_for('mailbox_edit', mailbox_id=m.id) }}" class="form">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     {% include "_mailbox_fields.html" %}
     <label class="wide">New password <input name="password" type="password" autocomplete="new-password" placeholder="Leave empty to keep the current password"></label>
-    <label class="wide check"><input type="checkbox" name="test" value="1" checked> Check the server accepts it before saving</label>
-    <p class="wide sub">Changed the password at your mail host because it may have leaked? Enter the new one here: PCs still signed in get it automatically, and PCs you signed out never do.</p>
+    <label class="wide check"><input type="checkbox" name="test" value="1" checked> Check that the mail host accepts it before saving</label>
     <div class="wide"><button class="primary">Save</button></div>
   </form>
+  <p class="hint">Changed the password at the mail host? Enter it here: PCs with this mailbox get it within a minute, PCs you signed out never do. Changing a server name needs the password typed again, so the saved one is never sent anywhere new.</p>
 </section>
 {% endif %}
 
-<section class="card">
-  <h2>Delete</h2>
+<section>
+  <h2>Delete this mailbox</h2>
+  <p class="dim">Signed out of every PC within a minute of each being online. The mailbox at the mail host is untouched.</p>
   <form method="post" action="{{ url_for('mailbox_delete', mailbox_id=m.id) }}" class="confirm">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <label><input type="checkbox" required> Delete this mailbox and sign it out of every PC</label>
+    <label class="check"><input type="checkbox" required> Yes, delete {{ m.email }} from this panel</label>
     <button class="danger">Delete mailbox</button>
   </form>
 </section>

@@ -2,14 +2,15 @@
 {% block title %}Activity · AMail Admin{% endblock %}
 {% block body %}
 <h1>Activity</h1>
-<div class="card">
-<table>
-  <tr><th>When</th><th>Who</th><th>What</th><th></th></tr>
+<p class="lede">Everything that happened on this server, newest first. Kept for about a year.</p>
+<table class="tbl">
+  <thead><tr><th>When</th><th>Who</th><th>What</th><th>Details</th></tr></thead>
+  <tbody>
   {% for r in rows %}
-  <tr><td class="sub nowrap">{{ r.at|ago }}</td><td>{{ r.actor }}</td><td>{{ r.action.replace('_', ' ') }}</td><td class="sub">{{ r.detail }}</td></tr>
+  <tr><td class="dim nowrap">{{ r.at|ago }}</td><td>{{ r.who }}</td><td>{{ r.what }}</td><td class="dim">{{ r.detail }}</td></tr>
   {% else %}
-  <tr><td colspan="4" class="sub">Nothing yet.</td></tr>
+  <tr><td colspan="4" class="dim">Nothing yet.</td></tr>
   {% endfor %}
+  </tbody>
 </table>
-</div>
 {% endblock %}

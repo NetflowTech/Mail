@@ -2633,6 +2633,15 @@ class ComposeDialog(QDialog):
                 body_text, attachments_json, body_html=html,
                 delay_seconds=delay))
         self._sent = True
+        try:
+            from .. import activity
+            activity.record(activity.email_for(acc_id),
+                            "replied" if getattr(self, "_reply_mode", False) else "sent",
+                            subject=self.subject_edit.text(),
+                            who=(f"{len(rcpts)} recipients" if bulk
+                                 else self.to_edit.text()))
+        except Exception:
+            pass
         if self.edit_outbox_id is None and self._draft_id is not None:
             # This window's draft became a real send — drop the draft row.
             self.db.delete_outbox(self._draft_id)

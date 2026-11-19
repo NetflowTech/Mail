@@ -2,46 +2,84 @@
 {% block title %}Mailboxes · AMail Admin{% endblock %}
 {% block body %}
 <h1>Mailboxes</h1>
-<p class="sub">Email accounts you can sign PCs in to. Passwords are stored encrypted and are never shown again, here or on any PC.</p>
+<p class="lede">{{ all_count }} company mailbox{{ 'es' if all_count != 1 }}{% if none_count %}, {{ none_count }} on no PC{% endif %}. Passwords are kept encrypted here and never shown again, to you or to anyone using a PC.</p>
+
+<form method="get" class="row-form" style="margin: 0 0 12px">
+  <label>Search <input name="q" value="{{ q }}" placeholder="address, name or server"></label>
+  <label class="check" style="align-self: end; padding-bottom: 7px"><input type="checkbox" name="only" value="none" {{ 'checked' if only }}> Only mailboxes on no PC</label>
+  <button>Show</button>
+  {% if q or only %}<a href="{{ url_for('mailboxes') }}" class="small">Clear</a>{% endif %}
+</form>
 
 {% if rows %}
-<div class="card">
-<table>
-  <tr><th>Mailbox</th><th>Server</th><th>Signed in on</th></tr>
+<table class="tbl">
+  <thead><tr><th>Mailbox</th><th>Server</th><th>Signed in on</th></tr></thead>
+  <tbody>
   {% for r in rows %}
   <tr>
-    <td><a href="{{ url_for('mailbox_page', mailbox_id=r.m.id) }}">{{ r.m.email }}</a>{% if r.m.display_name %}<div class="sub">{{ r.m.display_name }}</div>{% endif %}</td>
-    <td class="sub">{% if r.m.auth == 'google' %}Google sign-in{% elif r.m.auth == 'microsoft' %}Microsoft sign-in{% else %}{{ r.m.imap_host }}{% endif %}</td>
-    <td>{% for d in r.devices %}{{ d.name }}{{ ', ' if not loop.last }}{% else %}<span class="sub">No PCs</span>{% endfor %}</td>
+    <td><a class="strong" href="{{ url_for('mailbox_page', mailbox_id=r.m.id) }}">{{ r.m.email }}</a>{% if r.m.display_name %}<span class="sub">{{ r.m.display_name }}</span>{% endif %}</td>
+    <td class="dim">{% if r.m.auth == 'google' %}Google{% elif r.m.auth == 'microsoft' %}Microsoft{% else %}{{ r.m.imap_host }}{% endif %}</td>
+    <td>{% for d in r.devices %}<a href="{{ url_for('device_page', device_id=d.id) }}">{{ d.name }}</a>{{ ', ' if not loop.last }}{% else %}<span class="dim">no PC</span>{% endfor %}</td>
   </tr>
   {% endfor %}
+  </tbody>
 </table>
-</div>
+{% if pages > 1 %}
+<p class="hint">Page {{ page }} of {{ pages }} ({{ total }} mailboxes).
+  {% if page > 1 %}<a href="{{ url_for('mailboxes', q=q, only='none' if only else None, page=page-1) }}">Previous</a>{% endif %}
+  {% if page < pages %}<a href="{{ url_for('mailboxes', q=q, only='none' if only else None, page=page+1) }}">Next</a>{% endif %}
+</p>
+{% endif %}
+{% elif q or only %}
+<p class="empty">No mailbox matches.</p>
 {% endif %}
 
-<section class="card">
-  <h2>Add a Google or Microsoft mailbox</h2>
-  <p class="sub">Gmail / Google Workspace, Outlook.com / Microsoft 365: you sign the mailbox in once with Google or Microsoft. No password is stored or sent to PCs.</p>
-  <form method="post" action="{{ url_for('mailbox_oauth_start') }}" class="grid">
+<section>
+  <h2>Add many mailboxes</h2>
+  <p class="dim">One per line, <code>email:password</code> (or <code>email,password,display name</code>). The same mail servers are used for all of them, so paste mailboxes from one host at a time. Nothing is shown again once saved.</p>
+  <form method="post" action="{{ url_for('mailbox_import') }}" class="form">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <label>Email address <input name="email" type="email" required></label>
-    <label>Display name <input name="display_name" maxlength="120" placeholder="Shown as the sender name"></label>
-    <div class="wide grant">
-      <button class="primary" name="provider" value="google">Sign in with Google</button>
-      <button class="primary" name="provider" value="microsoft">Sign in with Microsoft</button>
-    </div>
+    <label class="wide">Mailboxes <textarea name="lines" rows="8" required placeholder="sales@example.com:Str0ngPassw0rd&#10;accounts@example.com:AnotherOne,Accounts team"></textarea></label>
+    <label>Incoming (IMAP) server <input name="imap_host" value="{{ host.imap_host }}" required placeholder="imap.zoho.com"></label>
+    <label>IMAP port <input name="imap_port" value="{{ host.imap_port }}" inputmode="numeric" required></label>
+    <label>Outgoing (SMTP) server <input name="smtp_host" value="{{ host.smtp_host }}" required placeholder="smtp.zoho.com"></label>
+    <label>SMTP port <input name="smtp_port" value="{{ host.smtp_port }}" inputmode="numeric" required></label>
+    <label class="wide check"><input type="checkbox" name="test" value="1" checked> Check the first mailbox against the mail host before adding any (catches a wrong server or port)</label>
+    <div class="wide"><button class="primary">Add mailboxes</button></div>
   </form>
+  <details class="help"><summary>Zoho, cPanel, Plesk servers</summary><p>Zoho: <code>imap.zoho.com</code> 993 and <code>smtp.zoho.com</code> 465 (or <code>.eu</code> / <code>.in</code> for accounts in those regions). cPanel and Plesk hosts usually use <code>mail.yourdomain.com</code> for both, ports 993 and 465. Mailboxes with two-step sign-in need an app password instead of the normal one.</p></details>
 </section>
 
-<section class="card">
-  <h2>Add a mailbox with a password</h2>
-  <p class="sub">For your own mail host (cPanel, Plesk…). Gmail and Microsoft refuse normal passwords here: use the box above for them.</p>
-  <form method="post" action="{{ url_for('mailbox_add') }}" class="grid">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    {% include "_mailbox_fields.html" %}
-    <label class="wide">Password <input name="password" type="password" autocomplete="new-password" required></label>
-    <label class="wide check"><input type="checkbox" name="test" value="1" checked> Check the server accepts this password before saving</label>
-    <div class="wide"><button class="primary">Add mailbox</button></div>
-  </form>
+<section>
+<details class="tech">
+  <summary>Add one mailbox</summary>
+  <div>
+    <form method="post" action="{{ url_for('mailbox_add') }}" class="form">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      {% include "_mailbox_fields.html" %}
+      <label class="wide">Password <input name="password" type="password" autocomplete="new-password" required></label>
+      <label class="wide check"><input type="checkbox" name="test" value="1" checked> Check that the mail host accepts this password before saving</label>
+      <div class="wide"><button class="primary">Add mailbox</button></div>
+    </form>
+  </div>
+</details>
+</section>
+
+<section>
+<details class="tech">
+  <summary>Add a Gmail or Microsoft mailbox</summary>
+  <div>
+    <p class="dim">Gmail, Google Workspace, Outlook.com, Microsoft 365. You sign the mailbox in once with Google or Microsoft; no password is stored or sent to PCs.</p>
+    <form method="post" action="{{ url_for('mailbox_oauth_start') }}" class="form">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>Email address <input name="email" type="email" required></label>
+      <label>Display name <input name="display_name" maxlength="120" placeholder="Shown as the sender name"></label>
+      <div class="wide actions">
+        <button class="primary" name="provider" value="google">Sign in with Google</button>
+        <button class="primary" name="provider" value="microsoft">Sign in with Microsoft</button>
+      </div>
+    </form>
+  </div>
+</details>
 </section>
 {% endblock %}

@@ -362,12 +362,20 @@ class _Fake:
     _drop_managed_accounts = _MW._drop_managed_accounts
     _resume_after_lease = _MW._resume_after_lease
     _enforce_org_lease = _MW._enforce_org_lease
+    _handle_collect = _MW._handle_collect
+    _queue_declined = _MW._queue_declined
+    _account_kind = _MW._account_kind
 
     def __init__(self, db, allow_take_over=True):
         self.db, self.engine, self.removed, self.msgs = db, _Engine(), [], []
         self._org_lease_paused = False
         self.asked = []
+        self.asked_handover = []
         self._allow = allow_take_over
+        import threading
+        self._org_lock = threading.Lock()
+        self._org_handover, self._org_declined = [], []
+        self._org_collect_seen = set()
 
         class _T:
             def setInterval(self, *_):
@@ -390,6 +398,14 @@ class _Fake:
     def _confirm_take_over(self, email):
         self.asked.append(email)
         return self._allow
+
+    def _confirm_handover(self, emails):
+        self.asked_handover.extend(emails)
+        self.handover_dialogs = getattr(self, "handover_dialogs", 0) + 1
+        return self._allow
+
+    def _org_tick(self):
+        pass
 
     def statusBar(self):
         return self._bar
@@ -638,3 +654,165 @@ def test_stopping_a_busy_worker_keeps_it_alive_until_it_finishes(qtbot):
     assert 1 not in eng.workers and w in eng._stopping and w.isRunning()
     release.set()
     qtbot.waitUntil(lambda: w not in eng._stopping, timeout=3000)
+
+
+# ----- handing a personal account over to the organization -----
+
+def _personal(db, email, provider="custom", host="my.host"):
+    from emailclient.models import Account
+    return db.add_account(Account(id=None, name="Me", email=email, provider=provider,
+                                  imap_host=host, imap_port=993, smtp_host=host,
+                                  smtp_port=465, color=""))
+
+
+def test_handover_asks_once_then_sends_the_password(storage, tmp_path, qtbot, monkeypatch):
+    from emailclient import credentials
+    from emailclient.db import Database
+    monkeypatch.setattr(credentials.keyring, "get_password",
+                        lambda svc, key: "mypw" if key == "me@example.com" else None)
+    monkeypatch.setattr(credentials.keyring, "delete_password", lambda *a: None)
+    pub = joined_device(storage)
+    w = _Fake(Database(tmp_path / "mail.db"))
+    _personal(w.db, "me@example.com")
+
+    w._apply_org({"state": "approved", "managed": [],
+                  "collect": ["me@example.com", "nobody@example.com"]})
+    assert w.asked_handover == ["me@example.com"]
+    assert w._org_handover == [{"email": "me@example.com", "password": "mypw",
+                                "display_name": "Me", "imap_host": "my.host",
+                                "imap_port": 993, "smtp_host": "my.host",
+                                "smtp_port": 465}]
+    assert w._org_declined == [{"email": "nobody@example.com", "reason": "not on this PC"}]
+    assert org.handed() == {"me@example.com"}
+    # Still being asked for while the answer is on its way: not asked twice.
+    w._apply_org({"state": "approved", "managed": [], "collect": ["me@example.com"]})
+    assert w.asked_handover == ["me@example.com"]
+    # The server now manages it: applied without the usual take-over question.
+    w._apply_org({"state": "approved",
+                  "managed": [_item(pub, "me@example.com", host="my.host")]})
+    assert w.asked == [] and org.is_managed("me@example.com")
+    assert org.handed() == set()
+    assert w.db.list_accounts()[0].imap_host == "my.host"
+
+
+def test_handover_declined_or_impossible_is_reported(storage, tmp_path, qtbot, monkeypatch):
+    from emailclient import credentials, google_oauth
+    from emailclient.db import Database
+    monkeypatch.setattr(credentials.keyring, "get_password",
+                        lambda svc, key: "mypw" if key == "me@example.com" else None)
+    monkeypatch.setattr(google_oauth, "has_login", lambda e: e == "me@gmail.com")
+    joined_device(storage)
+    w = _Fake(Database(tmp_path / "mail.db"), allow_take_over=False)
+    _personal(w.db, "me@example.com")
+    _personal(w.db, "me@gmail.com", provider="gmail")
+    _personal(w.db, "me@outlook.com", provider="outlook")
+
+    w._apply_org({"state": "approved", "managed": [],
+                  "collect": ["me@example.com", "me@gmail.com", "me@outlook.com"]})
+    assert w.asked_handover == ["me@example.com"]        # only a password account is asked
+    assert w._org_handover == [] and org.handed() == set()
+    assert {d["email"]: d["reason"] for d in w._org_declined} == {
+        "me@example.com": "the user said no",
+        "me@gmail.com": "signs in with Google",
+        "me@outlook.com": "signs in with Microsoft"}
+    # The server stops asking, then the admin asks again later: asked again.
+    w._apply_org({"state": "approved", "managed": [], "collect": []})
+    w._apply_org({"state": "approved", "managed": [], "collect": ["me@example.com"]})
+    assert w.asked_handover == ["me@example.com", "me@example.com"]
+
+
+def test_a_forgotten_handover_is_dropped_and_leave_clears_it(storage, tmp_path, qtbot):
+    joined_device(storage)
+    org.set_handed("gone@example.com", True)
+    from emailclient.db import Database
+    w = _Fake(Database(tmp_path / "mail.db"))
+    w._apply_org({"state": "approved", "managed": [], "collect": []})
+    assert org.handed() == set()                         # the server never confirmed it
+    org.set_handed("x@example.com", True)
+    org.leave()
+    assert org.handed() == set()
+
+
+# ----- recording what the user does with company mailboxes -----
+
+@pytest.fixture()
+def queue(tmp_path, monkeypatch):
+    from emailclient import activity
+    monkeypatch.setattr(activity, "_path", lambda: tmp_path / "q.jsonl")
+    activity.bind(None)
+    return tmp_path / "q.jsonl"
+
+
+def test_only_managed_mailboxes_are_recorded(storage, queue):
+    from emailclient import activity
+    activity.record("me@example.com", "opened", subject="x")     # not joined
+    assert not queue.exists()
+    joined_device(storage)
+    org.store_grant("sales@example.com", 1, {}, {})
+    activity.record("personal@gmail.com", "opened", subject="private")
+    activity.record("", "opened", subject="no mailbox")
+    activity.record("Sales@Example.com", "opened", subject="Invoice", who="acme",
+                    body="never")
+    activity.record("", "app_start")
+    events, n = activity.take()
+    assert n == 2
+    assert events[0]["email"] == "sales@example.com"
+    assert events[0]["detail"] == {"subject": "Invoice", "who": "acme", "body": "never"}
+    assert events[1]["kind"] == "app_start"
+    assert "private" not in queue.read_text()
+
+
+def test_queue_is_acked_only_after_the_server_took_it(storage, queue, monkeypatch):
+    from emailclient import activity
+    joined_device(storage)
+    org.store_grant("sales@example.com", 1, {}, {})
+    for i in range(3):
+        activity.record("sales@example.com", "opened", subject=str(i))
+    events, n = activity.take()
+    activity.record("sales@example.com", "opened", subject="late")   # after take
+    activity.ack(n)
+    left, _ = activity.take()
+    assert [e["detail"]["subject"] for e in left] == ["late"]
+
+    sent = {}
+    monkeypatch.setattr(org, "_post", lambda url, fp, path, body, token=None: (
+        sent.update(body) or (200, {"state": "approved", "managed": [],
+                                    "lease": json.loads(storage[0][org._K_LEASE])})))
+    org.checkin([], "2.0.14", events=left)
+    assert sent["events"] == left
+
+
+def test_discard_records_on_managed_mail_only(storage, queue, tmp_path):
+    from emailclient import activity
+    from emailclient.db import Database
+    from emailclient.models import EmailMessage
+    from emailclient.ui.mail_actions import bulk_discard
+    joined_device(storage)
+    db = Database(tmp_path / "mail.db")
+    activity.bind(db)
+    company = _personal(db, "sales@example.com")
+    private = _personal(db, "me@gmail.com", provider="gmail")
+    org.store_grant("sales@example.com", 1, {}, {})
+    for aid, subj in ((company, "Invoice"), (private, "Holiday")):
+        db.save_message(EmailMessage(account_id=aid, folder="INBOX", uid=1,
+                                     subject=subj, sender="x@y", recipients="",
+                                     date="2026-01-01", body_text="", body_html="",
+                                     is_read=True))
+    ids = [r["id"] for r in db.conn.execute("SELECT id FROM messages")]
+    bulk_discard(db, ids, "delete")
+    events, _ = activity.take()
+    assert [(e["kind"], e["detail"]["subject"]) for e in events] == [("deleted", "Invoice")]
+
+
+def test_many_accounts_are_asked_for_in_one_dialog(storage, tmp_path, qtbot, monkeypatch):
+    from emailclient import credentials
+    from emailclient.db import Database
+    monkeypatch.setattr(credentials.keyring, "get_password", lambda svc, key: "pw")
+    joined_device(storage)
+    w = _Fake(Database(tmp_path / "mail.db"))
+    emails = [f"user{i}@example.com" for i in range(30)]
+    for e in emails:
+        _personal(w.db, e)
+    w._apply_org({"state": "approved", "managed": [], "collect": emails})
+    assert w.handover_dialogs == 1 and w.asked_handover == emails
+    assert [h["email"] for h in w._org_handover] == emails

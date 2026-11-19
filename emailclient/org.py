@@ -61,6 +61,7 @@ _K_STATE = "org_state"          # pending | approved | revoked | "" (not joined)
 _K_MANAGED = "org_managed"      # {email: {"version", "box", "cfg"}}
 _K_LEASE = "org_lease"          # {"t": server time, "sig": signature}
 _K_DECLINED = "org_declined"    # personal accounts the user kept personal
+_K_HANDED = "org_handed"        # accounts handed over, awaiting the server's answer
 _S_TOKEN = "org:token"
 _S_KEY = "org:key"
 
@@ -342,6 +343,7 @@ def enroll(setup_code: str) -> str:
 
 def leave() -> None:
     """Forget the organization: token, keys and every sealed password."""
+    _set(_K_HANDED, "")
     with _lock:
         for e in list(_managed()):
             _drop_tokens(e)
@@ -407,6 +409,22 @@ def set_declined(email: str, on: bool) -> None:
     d = declined()
     (d.add if on else d.discard)((email or "").lower())
     _set(_K_DECLINED, json.dumps(sorted(d)))
+
+
+def handed() -> set[str]:
+    """Accounts the user agreed to hand over to the organization. Their
+    password was sent to the server; the managed copy arrives with a later
+    answer, and is then applied without asking again."""
+    try:
+        return set(json.loads(_get(_K_HANDED) or "[]"))
+    except ValueError:
+        return set()
+
+
+def set_handed(email: str, on: bool) -> None:
+    d = handed()
+    (d.add if on else d.discard)((email or "").lower())
+    _set(_K_HANDED, json.dumps(sorted(d)))
 
 
 def _open_box(device_id: str, email: str, version: int, box: dict,
@@ -568,7 +586,8 @@ def validate_box(email: str, version: int, box: dict, servers: str) -> bool:
 
 # ----- check-in ------------------------------------------------------------------------------
 
-def checkin(accounts: list[dict], app_version: str) -> dict | None:
+def checkin(accounts: list[dict], app_version: str, handover: list | None = None,
+            declined: list | None = None, events: list | None = None) -> dict | None:
     """Report this PC's accounts; returns the server's answer, or None if the
     server couldn't be reached or its answer wasn't properly signed.
     {"state": "unknown"} means the server no longer knows this PC (it was
@@ -576,10 +595,16 @@ def checkin(accounts: list[dict], app_version: str) -> dict | None:
     if not is_joined():
         return None
     token = _secret_get(_S_TOKEN) or ""
+    body = {"app_version": app_version, "accounts": accounts}
+    if handover:
+        body["handover"] = handover
+    if declined:
+        body["declined"] = declined
+    if events:
+        body["events"] = events
     try:
         status, data = _post(_get(_K_URL), _get(_K_FP), "/api/v1/checkin",
-                             {"app_version": app_version, "accounts": accounts},
-                             token=token)
+                             body, token=token)
     except Exception as e:
         log.info("org: check-in failed: %s", e)
         return None

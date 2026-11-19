@@ -40,13 +40,63 @@ in to the mail server itself. A determined, technical user with full control
 of their PC could dig it out of memory. Change a mailbox's password when you
 sign someone out of it for good.
 
+## Moving existing accounts under the organization
+
+People already using their company mailbox in AMail (with the password saved
+on their PC) don't have to set anything up again. Once their PC has joined
+and is approved, its page in the panel lists **Accounts the user added**.
+Click **Take over** (or *Take over all password accounts*):
+
+1. Within a minute, AMail on that PC asks the person to allow it. The
+   question says what happens; they can say no.
+2. On a yes, AMail sends the account's saved password and server settings
+   to this server over the pinned connection. The server stores the password
+   encrypted, the account becomes a company mailbox signed in on that PC, and
+   the password is removed from the PC. Mail keeps syncing; Account Settings
+   on the PC now says "Managed by your organization".
+3. On a no, the panel shows *Declined*. Ask them, then try again, or click
+   **Leave personal** to stop the panel reminding you about it.
+
+The server only accepts a hand-over it asked for, so a PC can't push
+mailboxes into the panel by itself. If the same mailbox is on several PCs,
+the first hand-over creates it; taking it over on the next PC just signs
+that PC in, keeping the password already stored.
+
+Accounts that sign in with Google or Microsoft have no password to hand
+over: add them under **Mailboxes** with the Google / Microsoft sign-in, then
+sign the PC in. AMail replaces the person's own sign-in with the managed one
+(after asking them).
+
+## What users do with company mailboxes
+
+The **Users** page lists, per PC and mailbox, what people did: emails
+opened, sent and replied to, deleted or marked as spam, attachments opened
+or saved, printed, marked read or unread, and when AMail was started or
+closed. Each entry is a few words (the subject and the other party); email
+contents are never recorded. Filter by PC, mailbox or day. A PC's own page
+shows its last few entries.
+
+Only mailboxes managed from this panel are recorded. Accounts people added
+themselves (a personal Gmail, say) are never recorded, and the server
+refuses entries for any address it doesn't manage. AMail's Organization
+tab tells the user that this recording happens.
+
+Entries reach the server with the PC's next check-in (within a minute while
+it's online) and queue on the PC meanwhile. They are kept for 90 days
+(`AMAIL_EVENT_DAYS` in `run_server.cmd` changes that) and then deleted.
+
 ## Admin panel security
 
 - **Two-step sign-in is required.** The first sign-in shows a QR code to scan
   with an authenticator app (Microsoft Authenticator, Google Authenticator,
   1Password…). After that, each sign-in needs the password and the current
-  6-digit code. Each code works once. Lost the phone? Run
-  `python -m amail_admin create-admin NAME --reset-2fa`.
+  6-digit code. Each code works once. Lost the phone? Another admin resets
+  it on the panel's **Admins** page; with no other admin, run
+  `python -m amail_admin create-admin NAME --reset-2fa` on the server.
+- **More admins:** add, remove, or reset them on the **Admins** page. Each
+  change asks for your own password again, so a panel left open can't be
+  used to add an admin behind your back. There's always at least one admin,
+  and you can't remove yourself.
 - **Sessions are ended on the server.** Signing out, or changing the
   password, ends them everywhere. A session also ends after 30 minutes idle,
   or after 8 hours in total.
@@ -148,7 +198,7 @@ Run these in the backend folder, with `AMAIL_ADMIN_DATA` set as above:
 
 | Command | What |
 |---------|------|
-| `python -m amail_admin create-admin NAME` | Add an admin or reset their password |
+| `python -m amail_admin create-admin NAME` | Add the first admin, or reset a password when no other admin can (the panel's Admins page does the rest) |
 | `python -m amail_admin setup-code` | Print the setup code |
 | `python -m amail_admin export-key` / `import-key` | Back up / restore the master key |
 

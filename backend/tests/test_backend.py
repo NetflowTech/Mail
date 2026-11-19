@@ -566,3 +566,305 @@ def test_signin_mailbox_cant_be_edited_like_a_password_one(env):
         "password": "x"})
     assert r.status_code == 400
     assert env["store"].mailbox(mid)["imap_host"] == "imap.gmail.com"
+
+
+# ----- the panel for a non-technical admin -----
+
+def test_home_page_guides_setup_and_shows_what_needs_doing(env):
+    c = lan(env["panel_app"])
+    tok, _ = login(c, env)
+    html = c.get("/").get_data(as_text=True)
+    assert "Set up in three steps" in html           # no mailbox, no PC yet
+    _, device_id, ptoken, pub = enroll(env["dev"], "Front desk")
+    html = c.get("/").get_data(as_text=True)
+    assert "Needs you" in html and "Front desk</b> wants to join" in html
+    assert f'action="/devices/{device_id}/approve"' in html   # approve inline
+    c.post(f"/devices/{device_id}/approve",
+           data={"csrf": tok, "check_code": crypto.check_code(pub)})
+    add_mailbox(env)
+    html = c.get("/").get_data(as_text=True)
+    assert "Set up in three steps" not in html and "Needs you" not in html
+
+
+def test_pc_note_is_saved_and_shown(env):
+    c = lan(env["panel_app"])
+    tok, _ = login(c, env)
+    _, device_id, _, _ = enroll(env["dev"])
+    r = c.post(f"/devices/{device_id}/edit",
+               data={"csrf": tok, "name": "Reception", "note": "Next to the door"})
+    assert r.status_code == 302
+    dev = env["store"].device(device_id)
+    assert (dev["name"], dev["note"]) == ("Reception", "Next to the door")
+    assert "Next to the door" in c.get("/").get_data(as_text=True)
+    assert "Next to the door" in c.get(f"/devices/{device_id}").get_data(as_text=True)
+    c.post(f"/devices/{device_id}/edit", data={"csrf": tok, "name": "", "note": "x"})
+    assert env["store"].device(device_id)["name"] == "Reception"   # unchanged
+
+
+def test_admins_can_be_added_and_removed_from_the_panel(env):
+    c = lan(env["panel_app"])
+    tok, _ = login(c, env)
+    store = env["store"]
+    # Needs the current admin's own password.
+    c.post("/admins/add", data={"csrf": tok, "username": "sara",
+                                "password": "a-long-enough-password", "confirm": "wrong"})
+    assert store.get_admin("sara") is None
+    c.post("/admins/add", data={"csrf": tok, "username": "sa ra",
+                                "password": "a-long-enough-password", "confirm": PW})
+    assert store.get_admin("sa ra") is None                        # bad username
+    c.post("/admins/add", data={"csrf": tok, "username": "sara",
+                                "password": "short", "confirm": PW})
+    assert store.get_admin("sara") is None
+    c.post("/admins/add", data={"csrf": tok, "username": "sara",
+                                "password": "a-long-enough-password", "confirm": PW})
+    assert store.get_admin("sara") is not None
+    html = c.get("/admins").get_data(as_text=True)
+    assert "sara" in html and "(you)" in html
+    # Can't remove yourself; can remove another, with your password.
+    c.post("/admins/remove", data={"csrf": tok, "username": "admin", "confirm": PW})
+    assert store.get_admin("admin") is not None
+    c.post("/admins/remove", data={"csrf": tok, "username": "sara", "confirm": "wrong"})
+    assert store.get_admin("sara") is not None
+    c.post("/admins/remove", data={"csrf": tok, "username": "sara", "confirm": PW})
+    assert store.get_admin("sara") is None
+    actions = [r["action"] for r in store.audit_log()]
+    assert "admin_added" in actions and "admin_removed" in actions
+
+
+def test_two_step_reset_makes_the_admin_set_it_up_again(env):
+    c = lan(env["panel_app"])
+    tok, _ = login(c, env)
+    store = env["store"]
+    store.set_admin("sara", crypto.hash_password("a-long-enough-password"))
+    store.set_totp("sara", crypto.new_totp_secret(), 5)
+    c.post("/admins/reset-two-step", data={"csrf": tok, "username": "sara",
+                                           "confirm": PW})
+    assert store.get_admin("sara")["totp_secret"] == ""
+    # Resetting your own ends your session too.
+    r = c.post("/admins/reset-two-step", data={"csrf": tok, "username": "admin",
+                                               "confirm": PW})
+    assert r.status_code == 302 and "/login" in r.headers["Location"]
+    assert c.get("/").status_code == 302
+
+
+def test_activity_page_speaks_plainly(env):
+    c = lan(env["panel_app"])
+    login(c, env)
+    env["store"].audit("device", "enroll_refused", "ip=10.0.0.9")
+    html = c.get("/audit").get_data(as_text=True)
+    assert "A PC tried to join with a wrong join code" in html
+    assert "enroll_refused" not in html
+    assert "Signed in" in html                        # the login just made
+
+
+# ----- taking over accounts the user added themselves -----
+
+def _checkin(env, token, accounts=(), **extra):
+    return env["dev"].post("/api/v1/checkin",
+                           json={"app_version": "2.0.14", "accounts": list(accounts),
+                                 **extra},
+                           headers={"Authorization": f"Bearer {token}"})
+
+
+def test_admin_takes_over_an_account_and_the_pc_hands_it_over(env):
+    c = lan(env["panel_app"])
+    tok, _ = login(c, env)
+    store = env["store"]
+    _, device_id, ptoken, pub = enroll(env["dev"], "Reception PC")
+    c.post(f"/devices/{device_id}/approve",
+           data={"csrf": tok, "check_code": crypto.check_code(pub)})
+    _checkin(env, ptoken, [{"email": "me@example.com", "managed": False, "kind": "password"},
+                           {"email": "me@gmail.com", "managed": False, "kind": "google"}])
+    page = c.get(f"/devices/{device_id}").get_data(as_text=True)
+    assert "me@example.com" in page and "Take over" in page
+    assert "Google sign-in" in page                    # the Gmail one can't be
+    # Nothing is asked of the PC until the admin clicks.
+    assert _checkin(env, ptoken).get_json()["collect"] == []
+    # A hand-over nobody asked for is ignored.
+    _checkin(env, ptoken, [{"email": "me@example.com", "managed": False}],
+             handover=[{"email": "me@example.com", "password": "x",
+                                     "imap_host": "h", "imap_port": 993,
+                                     "smtp_host": "h", "smtp_port": 465}])
+    assert store.mailbox_by_email("me@example.com") is None
+
+    c.post(f"/devices/{device_id}/takeover", data={"csrf": tok, "email": "me@gmail.com"})
+    assert store.takeovers_for(device_id) == []       # Google: refused
+    c.post(f"/devices/{device_id}/takeover", data={"csrf": tok, "email": "me@example.com"})
+    r = _checkin(env, ptoken, [{"email": "me@example.com", "managed": False}])
+    assert r.get_json()["collect"] == ["me@example.com"]
+    page = c.get(f"/devices/{device_id}").get_data(as_text=True)
+    assert "Waiting for the user" in page
+
+    r = _checkin(env, ptoken, [{"email": "me@example.com", "managed": False}],
+                 handover=[{"email": "me@example.com", "password": "s3cret",
+                            "display_name": "Me", "imap_host": "mail.example.com",
+                            "imap_port": 993, "smtp_host": "mail.example.com",
+                            "smtp_port": 465}]).get_json()
+    mb = store.mailbox_by_email("me@example.com")
+    assert mb is not None and mb["auth"] == "password" and mb["display_name"] == "Me"
+    assert crypto.decrypt_stored(env["master"], mb["password_enc"],
+                                 f"mailbox:{mb['id']}") == "s3cret"
+    assert r["collect"] == []
+    assert [m["email"] for m in r["managed"]] == ["me@example.com"]
+    assert "secret" in r["managed"][0]                # sealed for this PC, same answer
+    assert store.takeovers_for(device_id)[0]["status"] == "done"
+    for path in ("/", f"/devices/{device_id}", "/mailboxes", "/audit"):
+        assert "s3cret" not in c.get(path).get_data(as_text=True)
+
+
+def test_declined_and_existing_mailbox_hand_overs(env):
+    c = lan(env["panel_app"])
+    tok, _ = login(c, env)
+    store = env["store"]
+    _, d1, t1, pub1 = enroll(env["dev"], "PC one")
+    c.post(f"/devices/{d1}/approve", data={"csrf": tok, "check_code": crypto.check_code(pub1)})
+    _checkin(env, t1, [{"email": "shared@example.com", "managed": False}])
+    c.post(f"/devices/{d1}/takeover", data={"csrf": tok, "email": "shared@example.com"})
+    _checkin(env, t1, [{"email": "shared@example.com", "managed": False}],
+             declined=[{"email": "shared@example.com", "reason": "the user said no"}])
+    assert store.takeovers_for(d1)[0]["status"] == "declined"
+    assert "declined to hand over shared@example.com" in c.get("/").get_data(as_text=True)
+    c.post(f"/devices/{d1}/takeover/ignore", data={"csrf": tok, "email": "shared@example.com"})
+    assert store.takeovers_for(d1)[0]["status"] == "ignored"
+    assert "declined to hand over" not in c.get("/").get_data(as_text=True)
+
+    # The mailbox already exists (added by the admin): a hand-over from a
+    # second PC just signs that PC in; the admin's password is kept.
+    mid = add_mailbox(env, "shared@example.com", "admins-pw")
+    _, d2, t2, pub2 = enroll(env["dev"], "PC two")
+    c.post(f"/devices/{d2}/approve", data={"csrf": tok, "check_code": crypto.check_code(pub2)})
+    _checkin(env, t2, [{"email": "shared@example.com", "managed": False}])
+    c.post(f"/devices/{d2}/takeover", data={"csrf": tok, "email": "shared@example.com"})
+    r = _checkin(env, t2, [{"email": "shared@example.com", "managed": False}],
+                 handover=[{"email": "shared@example.com", "password": "pcs-pw",
+                                     "imap_host": "h", "imap_port": 993,
+                                     "smtp_host": "h", "smtp_port": 465}]).get_json()
+    assert [m["email"] for m in r["managed"]] == ["shared@example.com"]
+    mb = store.mailbox(mid)
+    assert crypto.decrypt_stored(env["master"], mb["password_enc"], f"mailbox:{mid}") == "admins-pw"
+    assert mb["imap_host"] == "mail.example.com"
+
+
+# ----- what users do with company mailboxes -----
+
+def test_user_activity_is_kept_shown_and_filtered(env, monkeypatch):
+    c = lan(env["panel_app"])
+    tok, _ = login(c, env)
+    store = env["store"]
+    add_mailbox(env, "sales@example.com")
+    _, device_id, ptoken, pub = enroll(env["dev"], "Reception PC")
+    events = [
+        {"t": time.time() - 60, "email": "sales@example.com", "kind": "opened",
+         "detail": {"subject": "Invoice 4411", "who": "acme@example.net",
+                    "body": "never stored", "x" * 50: "junk"}},
+        {"t": time.time() - 30, "email": "sales@example.com", "kind": "attachment_saved",
+         "detail": {"subject": "Invoice 4411", "name": "invoice.pdf"}},
+        {"t": time.time() - 20, "email": "personal@gmail.com", "kind": "opened",
+         "detail": {"subject": "secret"}},                   # not a company mailbox
+        {"t": time.time() - 10, "email": "", "kind": "app_start"},
+        {"t": time.time() - 5, "email": "", "kind": "opened"},   # PC-level needs app_*
+        {"t": "garbage", "email": "sales@example.com", "kind": "sent",
+         "detail": {"subject": "Re: quote", "who": "bob@example.net"}},
+    ]
+    # Not approved yet: nothing is kept.
+    _checkin(env, ptoken, events=events)
+    assert store.events() == []
+    c.post(f"/devices/{device_id}/approve",
+           data={"csrf": tok, "check_code": crypto.check_code(pub)})
+    _checkin(env, ptoken, events=events)
+    kept = store.events()
+    assert [e["kind"] for e in kept] == ["sent", "app_start", "attachment_saved", "opened"]
+    assert all("secret" not in e["detail"] and "never stored" not in e["detail"]
+               for e in kept)
+
+    html = c.get("/users").get_data(as_text=True)
+    assert "Opened \u201cInvoice 4411\u201d from acme@example.net" in html
+    assert "Saved attachment invoice.pdf" in html
+    assert "Sent \u201cRe: quote\u201d to bob@example.net" in html and "Started AMail" in html
+    assert "secret" not in html
+    html = c.get("/users?mailbox=sales@example.com").get_data(as_text=True)
+    assert "Started AMail" not in html and "Invoice 4411" in html
+    html = c.get(f"/users?pc={device_id}&day=2001-01-01").get_data(as_text=True)
+    assert "Nothing recorded" in html
+    assert "Invoice 4411" in c.get(f"/devices/{device_id}").get_data(as_text=True)
+
+    store.prune_events(time.time() + 1)
+    assert store.events() == []
+
+
+# ----- hundreds of mailboxes -----
+
+def test_import_list_parsing():
+    from amail_admin.panel import parse_import
+    entries, bad = parse_import(
+        "sales@example.com:Str0ng:with:colons\n"
+        "accounts@example.com, Pa ss, Accounts team, Ltd\n"
+        "# a comment\n\n"
+        "notanemail:pw\n"
+        "nopassword@example.com\n"
+        "UPPER@Example.com:x")
+    assert entries == [
+        {"email": "sales@example.com", "password": "Str0ng:with:colons", "display_name": ""},
+        {"email": "accounts@example.com", "password": "Pa ss", "display_name": "Accounts team, Ltd"},
+        {"email": "upper@example.com", "password": "x", "display_name": ""}]
+    assert bad == ["notanemail:pw", "nopassword@example.com"]
+
+
+def test_bulk_import_and_many_at_once_on_a_pc(env):
+    c = lan(env["panel_app"])
+    tok, _ = login(c, env)
+    store = env["store"]
+    lines = "\n".join(f"user{i}@example.com:pw{i}" for i in range(30))
+    host = {"imap_host": "imap.zoho.com", "imap_port": "993",
+            "smtp_host": "smtp.zoho.com", "smtp_port": "465"}
+    # The first mailbox is checked against the host when asked; a failure
+    # imports nothing.
+    env["tested"].clear()
+    env["panel_app"].view_functions  # noqa: B018 (keep flake quiet)
+    r = c.post("/mailboxes/import", data={"csrf": tok, "lines": lines, "test": "1", **host})
+    assert r.status_code == 302 and store.mailbox_count() == 30
+    assert env["tested"] == [("user0@example.com", "pw0", "imap.zoho.com", 993,
+                              "smtp.zoho.com", 465)]
+    mb = store.mailbox_by_email("user7@example.com")
+    assert crypto.decrypt_stored(env["master"], mb["password_enc"], f"mailbox:{mb['id']}") == "pw7"
+    # Importing again adds nothing and says so; the server settings are remembered.
+    c.post("/mailboxes/import", data={"csrf": tok, "lines": lines + "\nbad line", **host})
+    assert store.mailbox_count() == 30
+    page = c.get("/mailboxes").get_data(as_text=True)
+    assert "30 company mailboxes, 30 on no PC" in page and 'value="imap.zoho.com"' in page
+    assert "1 line(s) could not be read" in page
+    # Search and the "on no PC" filter.
+    page = c.get("/mailboxes?q=user2").get_data(as_text=True)
+    assert "user2@example.com" in page and "user1@example.com" not in page
+
+    # The overview switches from the grid to a PC list past 12 mailboxes,
+    # and "find a mailbox" says where one is.
+    _, device_id, ptoken, pub = enroll(env["dev"], "Desk 1")
+    c.post(f"/devices/{device_id}/approve", data={"csrf": tok, "check_code": crypto.check_code(pub)})
+    page = c.get("/").get_data(as_text=True)
+    assert "grid-tbl" not in page and "30 mailboxes in all" in page
+
+    # Tick many at once on the PC's page.
+    ids = [store.mailbox_by_email(f"user{i}@example.com")["id"] for i in range(25)]
+    from werkzeug.datastructures import MultiDict
+    r = c.post(f"/devices/{device_id}/grant",
+               data=MultiDict([("csrf", tok)] + [("mailbox_id", str(i)) for i in ids]))
+    assert r.status_code == 302 and len(store.granted_mailboxes(device_id)) == 25
+    page = c.get(f"/devices/{device_id}?q=user2").get_data(as_text=True)
+    assert "user25@example.com" in page
+    assert 'type="checkbox" name="mailbox_id" value="%d"' % ids[0] not in page   # already on it
+    page = c.get("/?q=user7").get_data(as_text=True)
+    assert "user7@example.com" in page and "Desk 1" in page
+    assert "Only mailboxes on no PC" in c.get("/mailboxes?only=none").get_data(as_text=True)
+    assert "user7@example.com" not in c.get("/mailboxes?only=none").get_data(as_text=True)
+
+    # Copy everything to a second PC, then sign it out of all.
+    _, d2, t2, pub2 = enroll(env["dev"], "Desk 2")
+    c.post(f"/devices/{d2}/approve", data={"csrf": tok, "check_code": crypto.check_code(pub2)})
+    c.post(f"/devices/{d2}/copy", data={"csrf": tok, "source": device_id})
+    assert len(store.granted_mailboxes(d2)) == 25
+    assert len(checkin(env["dev"], t2).get_json()["managed"]) == 25
+    c.post(f"/devices/{d2}/ungrant-all", data={"csrf": tok})
+    assert store.granted_mailboxes(d2) == []
+    for path in ("/", "/mailboxes", f"/devices/{device_id}", "/audit"):
+        assert "pw7" not in c.get(path).get_data(as_text=True)

@@ -241,6 +241,10 @@ class SettingsDialog(QDialog):
             text = f"Connected to {org.server_url()}."
             text += ("\n\nManaged mailboxes on this PC:\n  " + "\n  ".join(managed)
                      if managed else "\n\nNo managed mailboxes on this PC yet.")
+            text += ("\n\nYour organization records what is done with its "
+                     "company mailboxes on this PC: emails opened, sent, "
+                     "deleted, attachments saved. Accounts you added yourself "
+                     "are not recorded.")
         self.org_status.setText(text)
         self.org_join_box.setVisible(not st)
         self.org_leave_btn.setVisible(bool(st))

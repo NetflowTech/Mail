@@ -12,6 +12,7 @@ from ..db import Database
 from .compose import ComposeDialog
 from .date_filter import show_date_filter
 from . import editor_icons
+from .. import activity
 from .mail_actions import bulk_discard
 from .message_list import MessageList
 from .reader import ReaderPane
@@ -301,6 +302,7 @@ class GroupWindow(QMainWindow):
         if m:
             self.db.mark_read(msg_id)
             self.reader.show_message(m, self._accent_for(m.account_id))  # show the email instantly
+            activity.record_message(m, "opened")
             self._refresh_timer.start()  # bold-clear / counts can lag 300ms
 
     def open_message_external(self, m):

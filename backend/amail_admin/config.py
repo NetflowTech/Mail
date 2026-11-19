@@ -34,6 +34,8 @@ class Config:
     # How often PCs check in (seconds). A PC is "online" if it checked in within
     # ONLINE_FACTOR intervals.
     checkin_interval: int = 30
+    # How long the record of what users did with company mailboxes is kept.
+    event_days: int = 90
 
     @property
     def db_path(self) -> Path:
@@ -83,4 +85,5 @@ def from_env() -> Config:
         trusted_proxies=_networks(os.environ.get("AMAIL_TRUSTED_PROXIES"), ())
         if os.environ.get("AMAIL_TRUSTED_PROXIES") else (),
         checkin_interval=int(os.environ.get("AMAIL_CHECKIN_INTERVAL", "30")),
+        event_days=int(os.environ.get("AMAIL_EVENT_DAYS", "90")),
     )
