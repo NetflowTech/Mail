@@ -51,6 +51,7 @@ MAX_PENDING = 50                    # waiting PCs; more are refused
 PENDING_EXPIRY = 7 * 86400          # a request nobody approves goes away
 TOKEN_ROTATE_AFTER = 30 * 86400     # PCs get a fresh token this often
 TOKEN_RETRY_AFTER = 10 * 60         # ...and again if the fresh one wasn't taken up
+REVOKED_EVENT_GRACE = 86400         # events for a mailbox signed out this recently still count
 
 
 def _clip(v, n: int) -> str:
@@ -60,10 +61,12 @@ def _clip(v, n: int) -> str:
 def create_device_app(store: Store, master_key: bytes, checkin_interval: int,
                       signing_key, limiter: RateLimiter | None = None,
                       trusted_proxies: tuple = (), oauth_clients=None,
-                      event_retention: float = 90 * 86400) -> Flask:
+                      event_retention: float = 90 * 86400,
+                      proxy_header: str = "X-Forwarded-For") -> Flask:
     """*oauth_clients*: provider -> {"id", "secret"}, read per request (the
     admin can change them in Settings). *event_retention*: seconds the record
-    of what users did is kept."""
+    of what users did is kept. *proxy_header*: the one header a trusted proxy
+    puts the client's address in (see Config.proxy_header)."""
     last_prune = [0.0]
     from . import oauth as _oauth
     oauth_clients = oauth_clients or (lambda: _oauth.DEFAULT_CLIENTS)
@@ -80,8 +83,12 @@ def create_device_app(store: Store, master_key: bytes, checkin_interval: int,
         except ValueError:
             return peer
         if any(peer_ip in net for net in trusted_proxies):
-            fwd = (request.headers.get("CF-Connecting-IP")
-                   or request.headers.get("X-Forwarded-For", "").split(",")[-1])
+            # Only the configured header. A client can send any header it
+            # likes; the proxy overwrites (or appends to) this one, so the
+            # last X-Forwarded-For entry is the proxy's own observation.
+            fwd = request.headers.get(proxy_header, "")
+            if proxy_header.lower() == "x-forwarded-for":
+                fwd = fwd.split(",")[-1]
             fwd = fwd.strip()
             try:
                 return str(ipaddress.ip_address(fwd))
@@ -140,12 +147,15 @@ def create_device_app(store: Store, master_key: bytes, checkin_interval: int,
 
     def store_events(device, body: dict) -> None:
         """What the PC's user did with company mailboxes since last time.
-        Only for mailboxes this server knows (the PC filters personal ones
-        out; this makes sure), and only a few words each."""
+        Only for mailboxes this PC holds, or held until recently (its queue
+        may still carry the last things done before a sign-out), so one PC
+        can't write entries into another mailbox's record. Only a few words
+        each."""
         raw = body.get("events") or []
         if not isinstance(raw, list) or not raw:
             return
-        known = {m["email"].lower() for m in store.mailboxes()}
+        known = {m["email"].lower() for m in store.granted_mailboxes(device["id"])}
+        known |= store.recently_revoked_emails(device["id"], REVOKED_EVENT_GRACE)
         now = time.time()
         rows = []
         for ev in raw[:MAX_EVENTS]:

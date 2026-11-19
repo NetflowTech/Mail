@@ -25,12 +25,20 @@ MANIFEST_URL = "https://raw.githubusercontent.com/NetflowTech/Mail/main/version.
 _MINISIGN_PUBLIC_KEY = "RWSwsBNAhlE3D4MVOq+eY+Hyy7EhCPmm2Bz296ATJY/0ujcqyJ6X0BlH"
 
 
-def _verify_minisign(file_path: Path, sig_path: Path) -> bool:
+def _verify_minisign(file_path: Path, sig_path: Path,
+                     version: str | None = None) -> bool:
     """Verify a minisign Ed25519 signature against the embedded public key.
 
     Signature line layout: 2-byte algorithm tag, 8-byte key ID, 64-byte
     signature. Tag "ED" (minisign's default) signs BLAKE2b-512 of the file;
     legacy "Ed" signs the raw file. The trusted comment is also verified.
+
+    With *version*, the signed trusted comment must also carry
+    ``version:<that version>``. The signature alone proves the file is one
+    we released, not that it is the release version.json says it is:
+    whoever could change version.json could otherwise point it at an older,
+    signed build with a known problem and call it newer. Releases are
+    therefore signed with ``minisign -S -t "version:X.Y.Z" ...``.
     """
     try:
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -62,9 +70,55 @@ def _verify_minisign(file_path: Path, sig_path: Path) -> bool:
             return False
         trusted = lines[2][len(prefix):].encode("utf-8")
         pub_key.verify(base64.b64decode(lines[3]), signature + trusted)
+        if version is not None:
+            signed = signed_version(trusted.decode("utf-8"))
+            if signed is None:
+                _fail("the signature was made without a version "
+                      f"(expected {version})")
+                return False
+            if not same_version(signed, version):
+                _fail(f"the signature is for version {signed}, not {version}")
+                return False
         return True
     except Exception:
+        _fail("the signature didn't match the file")
         return False
+
+
+def signed_version(trusted_comment: str) -> str | None:
+    """The ``version:X.Y.Z`` (or ``version=X.Y.Z``) field of a trusted
+    comment, or None. Fields are separated by spaces or tabs."""
+    for field in trusted_comment.replace("\t", " ").split():
+        if field.lower().startswith(("version:", "version=")):
+            return field[len("version:"):].strip() or None
+    return None
+
+
+def same_version(a: str, b: str) -> bool:
+    """2.0.15 == v2.0.15 == 2.0.15.0 == ' 2.0.15 ': the same release however
+    it was written down. Anything unparsable never matches."""
+    def norm(v):
+        parts = _parse(str(v or "").strip().lstrip("vV"))
+        if parts is None:
+            return None
+        while len(parts) > 1 and parts[-1] == 0:
+            parts = parts[:-1]
+        return parts
+    na, nb = norm(a), norm(b)
+    return na is not None and na == nb
+
+
+# Why the last download was refused, in words the update dialog can show.
+_last_failure = ""
+
+
+def _fail(reason: str) -> None:
+    global _last_failure
+    _last_failure = reason
+
+
+def last_failure() -> str:
+    return _last_failure
 
 
 def _parse(v: str) -> tuple[int, ...] | None:
@@ -177,14 +231,24 @@ def check_only(local_version: str, url: str = MANIFEST_URL) -> dict | None:
 
 def download_and_verify(url: str, sha256: str, dest: Path,
                         timeout: float = 60.0, progress=None,
-                        sig_url: str | None = None) -> bool:
-    """Download *url* to *dest*, verify SHA-256 and the minisign signature.
-    Returns True only when all checks pass; a missing signature is a failure."""
+                        sig_url: str | None = None,
+                        version: str | None = None) -> bool:
+    """Download *url* to *dest*, verify SHA-256 and the minisign signature,
+    and that the signature was made for *version* (the one the manifest
+    announced). Returns True only when all checks pass; a missing signature
+    or version is a failure."""
+    _fail("")
     if not url.startswith("https://"):
+        _fail("the download address isn't https")
         return False
     if not sha256 or len(sha256) != 64:
+        _fail("version.json has no checksum for this build")
         return False
     if not sig_url or not sig_url.startswith("https://"):
+        _fail("version.json has no signature address for this build")
+        return False
+    if not version or not str(version).strip():
+        _fail("version.json names no version")
         return False
     dest = Path(dest)
     try:
@@ -204,6 +268,7 @@ def download_and_verify(url: str, sha256: str, dest: Path,
                     if progress and total:
                         progress(done / total)
         if h.hexdigest().lower() != sha256.lower():
+            _fail("the downloaded file's checksum doesn't match version.json")
             dest.unlink(missing_ok=True)
             return False
 
@@ -212,14 +277,16 @@ def download_and_verify(url: str, sha256: str, dest: Path,
             with urllib.request.urlopen(
                     sig_url, context=nethttp.ssl_context(), timeout=30.0) as resp:
                 sig_dest.write_bytes(resp.read())
-            if not _verify_minisign(dest, sig_dest):
+            if not _verify_minisign(dest, sig_dest, version):
                 dest.unlink(missing_ok=True)
                 return False
         finally:
             sig_dest.unlink(missing_ok=True)
 
         return True
-    except Exception:
+    except Exception as e:
+        if not _last_failure:
+            _fail(f"the download didn't complete ({e.__class__.__name__})")
         dest.unlink(missing_ok=True)
         return False
 

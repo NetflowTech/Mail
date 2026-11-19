@@ -21,6 +21,9 @@ class TestIsBlocked:
         "Invoice.exe", "Receipt.vbs", "run.bat", "x.cmd", "x.ps1", "x.scr",
         "x.hta", "x.msi", "x.js", "x.lnk", "x.iso", "x.img", "x.reg",
         "x.jar", "x.chm", "x.com", "x.command", "x.pkg", "x.app",
+        # Current phishing favourites: connect out or run content on open
+        "x.rdp", "x.one", "x.onepkg", "x.wsb", "x.jnlp", "x.iqy", "x.slk",
+        "x.cab", "x.msh", "x.msh1xml", "x.mht", "x.mhtml", "x.svg",
         "INVOICE.EXE",               # case doesn't matter
         "Invoice.pdf.exe",           # only the last extension counts
         "Invoice.exe.", "Invoice.exe ", "Invoice.exe. . ",  # Windows trims these

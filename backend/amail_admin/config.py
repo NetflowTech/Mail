@@ -31,6 +31,12 @@ class Config:
     # requests from these may say who the real client is (X-Forwarded-For /
     # CF-Connecting-IP); everyone else's headers are ignored.
     trusted_proxies: tuple = ()
+    # The one header a trusted proxy puts the real client address in.
+    # X-Forwarded-For (nginx, Caddy, most tunnels; the last address is the
+    # one our proxy added) or CF-Connecting-IP (Cloudflare). Believing any
+    # header the client might send itself would let it pick its own address
+    # and so dodge every rate limit.
+    proxy_header: str = "X-Forwarded-For"
     # How often PCs check in (seconds). A PC is "online" if it checked in within
     # ONLINE_FACTOR intervals.
     checkin_interval: int = 30
@@ -84,6 +90,7 @@ def from_env() -> Config:
                                  DEFAULT_ADMIN_NETWORKS),
         trusted_proxies=_networks(os.environ.get("AMAIL_TRUSTED_PROXIES"), ())
         if os.environ.get("AMAIL_TRUSTED_PROXIES") else (),
+        proxy_header=(os.environ.get("AMAIL_PROXY_HEADER") or "X-Forwarded-For").strip(),
         checkin_interval=int(os.environ.get("AMAIL_CHECKIN_INTERVAL", "30")),
         event_days=int(os.environ.get("AMAIL_EVENT_DAYS", "90")),
     )

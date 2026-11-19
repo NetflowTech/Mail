@@ -71,6 +71,9 @@ def cmd_create_admin(args) -> int:
         print("They don't match.")
         return 1
     app.store.set_admin(args.username, crypto.hash_password(pw))
+    # A reset is usually because the password may have leaked: whoever holds
+    # a session from it must be out too, whichever way the name was typed.
+    app.store.end_sessions(args.username)
     if args.reset_2fa:
         app.store.set_totp(args.username, "", 0)
     app.store.audit("console", "admin_set",
@@ -166,6 +169,7 @@ def cmd_run(_args) -> int:
              create_device_app(app.store, app.master, cfg.checkin_interval,
                                app.signing_key,
                                trusted_proxies=cfg.trusted_proxies,
+                               proxy_header=cfg.proxy_header,
                                oauth_clients=lambda: oauth_clients(app.store),
                                event_retention=cfg.event_days * 86400), 40),
             (cfg.admin_host, cfg.admin_port,

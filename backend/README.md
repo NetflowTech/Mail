@@ -145,8 +145,10 @@ PCs outside the office must reach port 8443. Choose one of these:
   this server's own certificate". PCs then check the proxy's certificate the
   normal way. Also set `AMAIL_TRUSTED_PROXIES` (in `run_server.cmd`) to the
   proxy's address, e.g. `127.0.0.1`. The backend then logs, and rate-limits,
-  each PC's real address instead of the proxy's. Only point a tunnel at port
-  8443, never at 8444.
+  each PC's real address instead of the proxy's. It reads that address from
+  one header only: `X-Forwarded-For` by default (nginx, Caddy, most
+  tunnels); for Cloudflare set `AMAIL_PROXY_HEADER=CF-Connecting-IP`. Only
+  point a tunnel at port 8443, never at 8444.
 
 ## Install (Windows server)
 

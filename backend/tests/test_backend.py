@@ -259,7 +259,8 @@ def test_a_pc_hammering_checkin_is_slowed(env):
 def test_forwarded_address_only_believed_from_a_trusted_proxy(env):
     import ipaddress
     app = create_device_app(env["store"], env["master"], 30, env["sign"],
-                            trusted_proxies=(ipaddress.ip_network("127.0.0.1/32"),))
+                            trusted_proxies=(ipaddress.ip_network("127.0.0.1/32"),),
+                            proxy_header="CF-Connecting-IP")
     via_proxy = app.test_client()
     via_proxy.environ_base["REMOTE_ADDR"] = "127.0.0.1"
     key = X25519PrivateKey.generate().public_key().public_bytes(
@@ -274,6 +275,32 @@ def test_forwarded_address_only_believed_from_a_trusted_proxy(env):
                 headers={"X-Forwarded-For": "1.2.3.4"})
     ips = sorted(d["last_ip"] for d in env["store"].devices())
     assert ips == ["198.51.100.7", "203.0.113.50"]
+
+
+def test_only_the_configured_proxy_header_names_the_client(env):
+    """Behind nginx, a client can send CF-Connecting-IP itself: it must be
+    ignored, or every rate limit could be dodged with a made-up address."""
+    import ipaddress
+    app = create_device_app(env["store"], env["master"], 30, env["sign"],
+                            trusted_proxies=(ipaddress.ip_network("127.0.0.1/32"),))
+    c = app.test_client()
+    c.environ_base["REMOTE_ADDR"] = "127.0.0.1"
+    key = X25519PrivateKey.generate().public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    c.post("/api/v1/enroll", json={"code": "ABCD-EFGH-JKLM-NPQR",
+                                   "public_key": crypto.b64e(key)},
+           headers={"CF-Connecting-IP": "203.0.113.50",
+                    "X-Forwarded-For": "203.0.113.9, 198.51.100.7"})
+    assert [d["last_ip"] for d in env["store"].devices()] == ["198.51.100.7"]
+    # And the same spoofed header can't buy more enrol attempts.
+    for i in range(40):
+        c.post("/api/v1/enroll", json={"code": "wrong", "public_key": crypto.b64e(key)},
+               headers={"CF-Connecting-IP": f"203.0.113.{i}",
+                        "X-Forwarded-For": "198.51.100.7"})
+    r = c.post("/api/v1/enroll", json={"code": "wrong", "public_key": crypto.b64e(key)},
+               headers={"CF-Connecting-IP": "203.0.113.200",
+                        "X-Forwarded-For": "198.51.100.7"})
+    assert r.status_code == 429
 
 
 # ----- panel: access -----
@@ -430,6 +457,102 @@ def test_connection_test_refuses_this_machine():
     from amail_admin.panel import test_mailbox
     err = test_mailbox("a@b.com", "pw", "localhost", 993, "localhost", 465)
     assert err and "won't connect" in err
+
+
+def test_connection_test_connects_to_the_address_it_checked(monkeypatch):
+    """A DNS name that answers a public address to the check and 127.0.0.1
+    a moment later must not get the test to connect locally: the address
+    that passed the check is the one connected to."""
+    import socket
+    from amail_admin import panel
+    answers = iter([("93.184.216.34",), ("127.0.0.1",), ("127.0.0.1",)])
+
+    def getaddrinfo(host, port, *a, **k):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (next(answers)[0], 0))]
+    connected = []
+
+    def create_connection(address, *a, **k):
+        connected.append(address)
+        raise OSError("not really connecting")
+    monkeypatch.setattr(panel.socket, "getaddrinfo", getaddrinfo)
+    monkeypatch.setattr(panel.socket, "create_connection", create_connection)
+    err = panel.test_mailbox("a@b.com", "pw", "rebind.test", 993, "rebind.test", 465)
+    assert err.startswith("IMAP:")
+    assert connected == [("93.184.216.34", 993)]
+
+
+def test_login_limit_counts_an_ipv6_lan_by_its_64(env):
+    from amail_admin.panel import limit_key
+    assert limit_key("2001:db8:1:2:aaaa:bbbb:cccc:1") == "2001:db8:1:2::/64"
+    assert limit_key("192.168.1.20") == "192.168.1.20"
+    assert limit_key("garbage") == "garbage"
+    # Ten wrong passwords from ten "different" addresses in one /64 use up
+    # that /64's allowance.
+    for i in range(10):
+        c = lan(env["panel_app"], f"fd00:0:0:1::{i}")
+        tok = csrf_in(c.get("/login").get_data(as_text=True))
+        r = c.post("/login", data={"csrf": tok, "username": "admin", "password": "wrong"})
+        assert r.status_code != 429
+    c = lan(env["panel_app"], "fd00:0:0:1::ffff")
+    tok = csrf_in(c.get("/login").get_data(as_text=True))
+    r = c.post("/login", data={"csrf": tok, "username": "admin", "password": "wrong"})
+    assert r.status_code == 429
+    # Another /64 is unaffected.
+    c = lan(env["panel_app"], "fd00:0:0:9::1")
+    tok = csrf_in(c.get("/login").get_data(as_text=True))
+    r = c.post("/login", data={"csrf": tok, "username": "admin", "password": "wrong"})
+    assert r.status_code != 429
+
+
+def test_bad_ids_are_a_400_not_a_500(env):
+    c = lan(env["panel_app"])
+    tok, _ = login(c, env)
+    _, device_id, _, pub = enroll(env["dev"])
+    c.post(f"/devices/{device_id}/approve", data={"csrf": tok, "check_code": crypto.check_code(pub)})
+    r = c.post(f"/devices/{device_id}/ungrant", data={"csrf": tok, "mailbox_id": "abc"})
+    assert r.status_code == 400
+    assert c.get("/mailboxes?page=abc").status_code == 400
+    r = c.post("/mailboxes/oauth/start", data={"csrf": tok, "provider": "google",
+                                               "email": "a@b.com", "mailbox_id": "x"})
+    assert r.status_code == 400
+
+
+def test_a_pc_can_only_record_activity_for_mailboxes_it_holds(env):
+    c = lan(env["panel_app"])
+    tok, _ = login(c, env)
+    store = env["store"]
+    sales = add_mailbox(env, "sales@example.com")
+    add_mailbox(env, "accounts@example.com")
+    _, device_id, ptoken, pub = enroll(env["dev"], "Reception PC")
+    c.post(f"/devices/{device_id}/approve", data={"csrf": tok, "check_code": crypto.check_code(pub)})
+    c.post(f"/devices/{device_id}/grant", data={"csrf": tok, "mailbox_id": sales})
+
+    def ev(email, subject):
+        return {"t": time.time(), "email": email, "kind": "opened",
+                "detail": {"subject": subject}}
+    _checkin(env, ptoken, events=[ev("sales@example.com", "mine"),
+                                  ev("accounts@example.com", "forged")])
+    assert [e["email"] for e in store.events()] == ["sales@example.com"]
+    # Signed out: what was queued just before still lands, for a while.
+    c.post(f"/devices/{device_id}/ungrant", data={"csrf": tok, "mailbox_id": sales})
+    _checkin(env, ptoken, events=[ev("sales@example.com", "last one")])
+    assert len(store.events()) == 2
+    store._x("UPDATE revocations SET at = at - 2 * 86400")
+    _checkin(env, ptoken, events=[ev("sales@example.com", "too late")])
+    assert len(store.events()) == 2
+
+
+def test_console_password_reset_ends_sessions_whatever_the_case(env, monkeypatch):
+    import types
+    from amail_admin import __main__ as console
+    c = lan(env["panel_app"])
+    login(c, env)
+    assert c.get("/").status_code == 200
+    monkeypatch.setattr(console, "App", lambda: types.SimpleNamespace(store=env["store"]))
+    monkeypatch.setattr(console.getpass, "getpass", lambda *_: "a brand new password")
+    assert console.cmd_create_admin(types.SimpleNamespace(username="ADMIN", reset_2fa=False)) == 0
+    r = c.get("/")
+    assert r.status_code == 302 and "/login" in r.headers["Location"]
 
 
 def test_alerts_show_on_suspicious_activity(env):
@@ -751,7 +874,7 @@ def test_user_activity_is_kept_shown_and_filtered(env, monkeypatch):
     c = lan(env["panel_app"])
     tok, _ = login(c, env)
     store = env["store"]
-    add_mailbox(env, "sales@example.com")
+    sales = add_mailbox(env, "sales@example.com")
     _, device_id, ptoken, pub = enroll(env["dev"], "Reception PC")
     events = [
         {"t": time.time() - 60, "email": "sales@example.com", "kind": "opened",
@@ -771,6 +894,7 @@ def test_user_activity_is_kept_shown_and_filtered(env, monkeypatch):
     assert store.events() == []
     c.post(f"/devices/{device_id}/approve",
            data={"csrf": tok, "check_code": crypto.check_code(pub)})
+    c.post(f"/devices/{device_id}/grant", data={"csrf": tok, "mailbox_id": sales})
     _checkin(env, ptoken, events=events)
     kept = store.events()
     assert [e["kind"] for e in kept] == ["sent", "app_start", "attachment_saved", "opened"]

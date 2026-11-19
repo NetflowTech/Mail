@@ -173,6 +173,32 @@ def who_label(actor: str) -> str:
             "console": "The server console"}.get(actor, actor)
 
 
+def limit_key(addr: str | None = None) -> str:
+    """What a login limit counts against. An IPv4 address as is; an IPv6
+    address as its /64, since a machine on a LAN can give itself any
+    address in its /64 at will."""
+    addr = request.remote_addr if addr is None else addr
+    try:
+        ip = ipaddress.ip_address(addr or "")
+    except ValueError:
+        return addr or "?"
+    if ip.version == 6:
+        return str(ipaddress.ip_network((ip, 64), strict=False))
+    return str(ip)
+
+
+def form_int(name: str, source=None, default: int = 0) -> int:
+    """An integer field from the form (or *source*); anything else is a
+    400, not a 500."""
+    raw = (request.form if source is None else source).get(name)
+    if raw in (None, ""):
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        abort(400)
+
+
 def ip_in(addr: str, networks) -> bool:
     try:
         ip = ipaddress.ip_address(addr)
@@ -200,18 +226,57 @@ def ago(ts: float | None) -> str:
     return f"{s // 86400} days ago"
 
 
-def _refuse_local_target(host: str) -> str | None:
-    """The connection test may reach any mail server, private ones included,
-    but not this machine or link-local / metadata addresses."""
+def _checked_address(host: str) -> tuple[str | None, str]:
+    """(error, address). The connection test may reach any mail server,
+    private ones included, but not this machine or link-local / metadata
+    addresses. The address checked here is the one the test then connects
+    to: resolving the name a second time would let a DNS name that answers
+    differently each time pass the check and then point at 127.0.0.1."""
     try:
-        infos = socket.getaddrinfo(host, None)
+        infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
     except OSError as e:
-        return f"Can't find {host}: {e}"
+        return f"Can't find {host}: {e}", ""
+    chosen = ""
     for info in infos:
         ip = ipaddress.ip_address(info[4][0])
         if ip.is_loopback or ip.is_link_local or ip.is_unspecified or ip.is_multicast:
-            return f"{host} points at an address the test won't connect to."
-    return None
+            return f"{host} points at an address the test won't connect to.", ""
+        chosen = chosen or str(ip)
+    if not chosen:
+        return f"Can't find {host}.", ""
+    return None, chosen
+
+
+class _PinnedIMAP(imaplib.IMAP4_SSL):
+    """IMAP over TLS to a checked address, with the certificate still
+    verified against the host name."""
+
+    def __init__(self, host, port, address, ssl_context, timeout):
+        self._pinned = address
+        super().__init__(host, port, ssl_context=ssl_context, timeout=timeout)
+
+    def _create_socket(self, timeout):
+        sock = socket.create_connection((self._pinned, self.port), timeout)
+        return self.ssl_context.wrap_socket(sock, server_hostname=self.host)
+
+
+class _PinnedSMTP(smtplib.SMTP):
+    def __init__(self, host, port, address, timeout):
+        self._pinned = address
+        super().__init__(host, port, timeout=timeout)
+
+    def _get_socket(self, host, port, timeout):
+        return socket.create_connection((self._pinned, port), timeout)
+
+
+class _PinnedSMTPSSL(smtplib.SMTP_SSL):
+    def __init__(self, host, port, address, context, timeout):
+        self._pinned = address
+        super().__init__(host, port, context=context, timeout=timeout)
+
+    def _get_socket(self, host, port, timeout):
+        sock = socket.create_connection((self._pinned, port), timeout)
+        return self.context.wrap_socket(sock, server_hostname=self._host)
 
 
 def test_mailbox(email: str, password: str, imap_host: str, imap_port: int,
@@ -219,8 +284,9 @@ def test_mailbox(email: str, password: str, imap_host: str, imap_port: int,
     """Log in to IMAP and SMTP exactly the way AMail will (IMAP over TLS on
     any port; SMTP over TLS on 465, STARTTLS otherwise; certificates
     verified). None if both work, else a short reason."""
+    addresses = {}
     for h in {imap_host, smtp_host}:
-        bad = _refuse_local_target(h)
+        bad, addresses[h] = _checked_address(h)
         if bad:
             return bad
     # The same trusted-authority list AMail uses (certifi), so the check
@@ -229,8 +295,7 @@ def test_mailbox(email: str, password: str, imap_host: str, imap_port: int,
     import certifi
     ctx = ssl.create_default_context(cafile=certifi.where())
     try:
-        c = imaplib.IMAP4_SSL(imap_host, imap_port, ssl_context=ctx,
-                              timeout=timeout)
+        c = _PinnedIMAP(imap_host, imap_port, addresses[imap_host], ctx, timeout)
         try:
             c.login(email, password)
         finally:
@@ -242,9 +307,9 @@ def test_mailbox(email: str, password: str, imap_host: str, imap_port: int,
         return f"IMAP: {e}"[:200]
     try:
         if smtp_port == 465:
-            s = smtplib.SMTP_SSL(smtp_host, smtp_port, context=ctx, timeout=timeout)
+            s = _PinnedSMTPSSL(smtp_host, smtp_port, addresses[smtp_host], ctx, timeout)
         else:
-            s = smtplib.SMTP(smtp_host, smtp_port, timeout=timeout)
+            s = _PinnedSMTP(smtp_host, smtp_port, addresses[smtp_host], timeout)
             s.starttls(context=ctx)
         try:
             s.login(email, password)
@@ -462,9 +527,12 @@ def create_panel_app(cfg: Config, store: Store, master_key: bytes,
     def login():
         if request.method == "POST":
             ip = request.remote_addr or ""
-            # Limited per address only: a per-username limit would let anyone
-            # on the network lock the admin out by typing wrong passwords.
-            if not limiter.allow(f"login:{ip}", 10, 900):
+            # Limited per address (an IPv6 /64, so a LAN machine can't dodge
+            # it by changing its address) plus a ceiling for everyone
+            # together. Not per username: that would let anyone on the
+            # network lock the admin out by typing wrong passwords.
+            if not (limiter.allow(f"login:{limit_key()}", 10, 900)
+                    and limiter.allow("login:all", 60, 900)):
                 flash("Too many attempts from this computer. Wait 15 minutes.",
                       "bad")
                 return render_template("login.html"), 429
@@ -501,7 +569,8 @@ def create_panel_app(cfg: Config, store: Store, master_key: bytes,
             return redirect(url_for("login"))
         if request.method == "POST":
             ip = request.remote_addr or ""
-            if not limiter.allow(f"code:{ip}", 10, 900):
+            if not (limiter.allow(f"code:{limit_key()}", 10, 900)
+                    and limiter.allow("code:all", 60, 900)):
                 flash("Too many attempts. Wait 15 minutes.", "bad")
                 session.clear()
                 return redirect(url_for("login"))
@@ -801,7 +870,7 @@ def create_panel_app(cfg: Config, store: Store, master_key: bytes,
     @app.post("/devices/<device_id>/ungrant")
     def device_ungrant(device_id):
         dev = store.device(device_id) or abort(404)
-        mb = store.mailbox(int(request.form.get("mailbox_id") or 0)) or abort(404)
+        mb = store.mailbox(form_int("mailbox_id")) or abort(404)
         store.revoke(dev["id"], mb["id"])
         store.audit(actor(), "signed_out", f"{mb['email']} on {dev['name']}")
         flash(f"{mb['email']} will be signed out of {dev['name']} within a "
@@ -828,7 +897,7 @@ def create_panel_app(cfg: Config, store: Store, master_key: bytes,
         q = (request.args.get("q") or "").strip()[:80]
         only = request.args.get("only") == "none"
         try:
-            page = max(1, int(request.args.get("page") or 1))
+            page = max(1, form_int("page", request.args, 1))
         except ValueError:
             page = 1
         total = store.mailbox_count(q, only)
@@ -933,7 +1002,7 @@ def create_panel_app(cfg: Config, store: Store, master_key: bytes,
         provider = request.form.get("provider") or ""
         email = (request.form.get("email") or "").strip().lower()
         name = (request.form.get("display_name") or "").strip()[:120]
-        renew = int(request.form.get("mailbox_id") or 0)
+        renew = form_int("mailbox_id")
         if provider not in oauth.PROVIDERS:
             abort(400)
         if renew:

@@ -45,6 +45,12 @@ CREATE TABLE IF NOT EXISTS grants (
     created_at   REAL NOT NULL,
     PRIMARY KEY (device_id, mailbox_id)
 );
+CREATE TABLE IF NOT EXISTS revocations (
+    device_id    TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    email        TEXT NOT NULL,
+    at           REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS revocations_device ON revocations(device_id, at);
 CREATE TABLE IF NOT EXISTS admins (
     username     TEXT PRIMARY KEY COLLATE NOCASE,
     pw_hash      TEXT NOT NULL,
@@ -199,7 +205,11 @@ class Store:
         self._x("DELETE FROM sessions WHERE id=?", (sid_hash,))
 
     def end_sessions(self, username: str) -> None:
-        self._x("DELETE FROM sessions WHERE username=?", (username,))
+        """Every session of this admin, however the name was typed: admin
+        names are case-insensitive, so the sessions must be matched that
+        way too, or a reset would leave a stolen session alive."""
+        self._x("DELETE FROM sessions WHERE username=? COLLATE NOCASE",
+                (username,))
 
     def prune_sessions(self, idle: float, absolute: float) -> None:
         now = time.time()
@@ -376,11 +386,32 @@ class Store:
         return len(self.granted_mailboxes(device_id)) - before
 
     def revoke_all(self, device_id: str) -> int:
+        self._note_revoked(device_id, [m["email"] for m in
+                                       self.granted_mailboxes(device_id)])
         return self._x("DELETE FROM grants WHERE device_id=?", (device_id,)).rowcount
 
     def revoke(self, device_id: str, mailbox_id: int) -> None:
+        m = self.mailbox(mailbox_id)
+        if m is not None:
+            self._note_revoked(device_id, [m["email"]])
         self._x("DELETE FROM grants WHERE device_id=? AND mailbox_id=?",
                 (device_id, mailbox_id))
+
+    def _note_revoked(self, device_id: str, emails: list[str]) -> None:
+        """Remember a sign-out for a while: the PC's activity queue may still
+        carry the last things done on that mailbox, and those still belong."""
+        now = time.time()
+        with self._lock:
+            self._db.executemany(
+                "INSERT INTO revocations(device_id, email, at) VALUES(?,?,?)",
+                [(device_id, e.lower(), now) for e in emails])
+            self._db.execute("DELETE FROM revocations WHERE at < ?", (now - 7 * 86400,))
+            self._db.commit()
+
+    def recently_revoked_emails(self, device_id: str, within: float) -> set[str]:
+        return {r["email"] for r in self._q(
+            "SELECT email FROM revocations WHERE device_id=? AND at >= ?",
+            (device_id, time.time() - within))}
 
     # ----- what users did with company mailboxes -----
     def add_events(self, device_id: str, rows: list[tuple]) -> None:

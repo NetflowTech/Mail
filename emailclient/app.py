@@ -291,11 +291,15 @@ def main():
         ok = _updater.download_and_verify(
             url, sha256, dest,
             progress=lambda p: (prog.setValue(int(p * 100)), app.processEvents()),
-            sig_url=_updater.platform_sig_url(manifest))
+            sig_url=_updater.platform_sig_url(manifest),
+            version=str(manifest.get("version", "")))
         prog.close()
         if not ok:
+            why = _updater.last_failure()
             QMessageBox.warning(window, "AMail Update",
-                                "Download failed or file was corrupt.\nTry again later.")
+                                "The update could not be downloaded or verified"
+                                + (f": {why}." if why else ".")
+                                + "\nTry again later.")
             return
         # Say what happens next: the installer runs in a small progress window
         # after AMail closes, and the app comes back on its own. Without this,

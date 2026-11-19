@@ -36,11 +36,17 @@ BLOCKED_EXTENSIONS = frozenset({
     ".wsf", ".wsh", ".ps1", ".ps1xml", ".ps2", ".ps2xml", ".psc1", ".psc2",
     ".psd1", ".psm1", ".hta", ".jar", ".py", ".pyc", ".pyw", ".pyz", ".pl",
     ".rb", ".sh", ".scf", ".sct", ".shb", ".shs",
+    ".msh", ".msh1", ".msh2", ".mshxml", ".msh1xml", ".msh2xml",
     # Shortcuts and settings that point at, or run, something else
     ".lnk", ".url", ".website", ".inf", ".reg", ".library-ms",
     ".searchconnector-ms", ".settingcontent-ms", ".mof", ".chm", ".cer",
+    # Files that connect the PC somewhere, or fetch and run content, the
+    # moment they open: remote desktop, Windows Sandbox, Java Web Start,
+    # Excel web queries, SYLK, web archives, scriptable SVG, OneNote
+    ".rdp", ".wsb", ".jnlp", ".iqy", ".slk", ".mht", ".mhtml", ".svg",
+    ".one", ".onepkg",
     # Disk images and archives whose contents escape the internet tag
-    ".iso", ".img", ".vhd", ".vhdx", ".udf",
+    ".iso", ".img", ".vhd", ".vhdx", ".udf", ".cab",
     # macOS programs, installers and scripts
     ".command", ".terminal", ".tool", ".pkg", ".mpkg", ".dmg", ".workflow",
     ".action", ".scpt", ".scptd", ".applescript", ".osax", ".prefpane",
