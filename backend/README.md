@@ -162,7 +162,9 @@ PCs outside the office must reach port 8443. Choose one of these:
    ```
 
    Add `-AdminNetwork <admin PC addresses>` to limit who can reach the
-   panel. The script asks for the admin password, installs exact,
+   panel. Behind Cloudflare Tunnel, add `-TrustedProxies 127.0.0.1
+   -ProxyHeader CF-Connecting-IP` (see *Remote PCs*). The script asks for
+   the admin password, installs exact,
    checksum-verified library versions, locks the folder against changes by
    non-administrators, and runs the backend as the low-privilege LOCAL
    SERVICE account, starting with Windows.

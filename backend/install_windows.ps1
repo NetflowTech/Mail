@@ -12,6 +12,13 @@
               (default), or the admins' own addresses / subnet, e.g.
               "192.168.1.50,192.168.1.51" or "192.168.10.0/28". Narrower is
               safer: guest Wi-Fi on the same network should not reach it.
+  -TrustedProxies  only when PCs reach port 8443 through a tunnel or reverse
+              proxy on this machine (Cloudflare Tunnel, nginx): its address,
+              usually 127.0.0.1. The backend then takes each PC's real
+              address from the proxy, for its logs and rate limits.
+  -ProxyHeader  the header that proxy puts the PC's address in:
+              "CF-Connecting-IP" for Cloudflare Tunnel, "X-Forwarded-For"
+              (the default) for nginx, Caddy and most others.
 
   What it does:
     1. creates a Python environment in .venv and installs the requirements,
@@ -30,7 +37,9 @@
 param(
     [Parameter(Mandatory = $true)][string]$PublicUrl,
     [string]$Admin = "admin",
-    [string]$AdminNetwork = "LocalSubnet"
+    [string]$AdminNetwork = "LocalSubnet",
+    [string]$TrustedProxies = "",
+    [string]$ProxyHeader = "X-Forwarded-For"
 )
 $ErrorActionPreference = "Stop"
 
@@ -90,12 +99,16 @@ if ($AdminNetwork -eq "LocalSubnet") {
 
 Write-Host "==> Registering the startup task"
 $Runner = Join-Path $Here "run_server.cmd"
+$ProxyLines = ""
+if ($TrustedProxies) {
+    $ProxyLines = "set AMAIL_TRUSTED_PROXIES=$TrustedProxies`r`nset AMAIL_PROXY_HEADER=$ProxyHeader`r`n"
+}
 @"
 @echo off
 rem Started by the "AMail Admin" scheduled task. Do not move this folder.
 set AMAIL_ADMIN_DATA=$Data
 set AMAIL_ADMIN_NETWORKS=$PanelNets
-cd /d "%~dp0"
+${ProxyLines}cd /d "%~dp0"
 "%~dp0.venv\Scripts\python.exe" -m amail_admin run >> "$Data\server.log" 2>&1
 "@ | Set-Content -Encoding ASCII $Runner
 
