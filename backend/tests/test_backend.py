@@ -868,3 +868,46 @@ def test_bulk_import_and_many_at_once_on_a_pc(env):
     assert store.granted_mailboxes(d2) == []
     for path in ("/", "/mailboxes", f"/devices/{device_id}", "/audit"):
         assert "pw7" not in c.get(path).get_data(as_text=True)
+
+
+def test_token_rotation_recovers_when_the_pc_never_took_the_new_token(env, monkeypatch):
+    """A PC that keeps using its old token (the answer with the new one was
+    lost, or it couldn't be stored) gets another one, instead of the old one
+    staying valid for ever."""
+    from amail_admin import device_api
+    store, dev = env["store"], env["dev"]
+    _, device_id, old, _ = enroll(dev)
+    store._x("UPDATE devices SET token_issued_at=? WHERE id=?",
+             (time.time() - 31 * 86400, device_id))
+    first = checkin(dev, old).get_json()["new_token"]
+    # Right away: the PC is given time to store it.
+    assert "new_token" not in checkin(dev, old).get_json()
+    # Still on the old token ten minutes later: a fresh one is issued.
+    real = time.time
+    monkeypatch.setattr(device_api.time, "time",
+                        lambda: real() + device_api.TOKEN_RETRY_AFTER + 1)
+    second = checkin(dev, old).get_json()["new_token"]
+    assert second != first
+    assert checkin(dev, first).status_code == 401           # the unused one is gone
+    assert checkin(dev, old).status_code == 200             # the old still works...
+    assert checkin(dev, second).status_code == 200
+    assert checkin(dev, old).status_code == 401             # ...until the new is used
+
+
+def test_rate_limiter_forgets_quiet_clients():
+    from amail_admin import ratelimit
+    now = [0.0]
+    lim = RateLimiter(clock=lambda: now[0])
+    for i in range(10_000):
+        assert lim.allow(f"badtoken:10.0.{i // 256}.{i % 256}", limit=30, per_seconds=600)
+    assert len(lim) == 10_000
+    now[0] += 601 + ratelimit.SWEEP_EVERY
+    lim.allow("device:1", limit=20, per_seconds=60)
+    assert len(lim) == 1
+    # A window still open is kept, and still enforced.
+    for _ in range(19):
+        assert lim.allow("device:1", limit=20, per_seconds=60)
+    assert not lim.allow("device:1", limit=20, per_seconds=60)
+    now[0] += ratelimit.SWEEP_EVERY
+    lim.allow("other", limit=1, per_seconds=1)
+    assert len(lim) == 2

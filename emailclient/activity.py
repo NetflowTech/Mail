@@ -53,7 +53,16 @@ def _path():
 
 def record(email: str, kind: str, **detail) -> None:
     """Note that *kind* happened on *email*'s mailbox. Silently does nothing
-    for an account the organization doesn't manage, or when not joined."""
+    for an account the organization doesn't manage, or when not joined.
+    Never raises: recording is a side note to whatever the caller is doing
+    (opening a message, shutting down), which must not fail because of it."""
+    try:
+        _record(email, kind, detail)
+    except Exception as e:                 # keychain, settings, disk, anything
+        log.debug("activity: not recorded: %s", e)
+
+
+def _record(email: str, kind: str, detail: dict) -> None:
     global _written
     email = (email or "").lower()
     if not org.is_joined():
@@ -66,14 +75,11 @@ def record(email: str, kind: str, **detail) -> None:
     ev = {"t": round(time.time(), 3), "email": email, "kind": kind[:32],
           "detail": {k: str(v)[:200] for k, v in detail.items() if v}}
     with _lock:
-        try:
-            with open(_path(), "a", encoding="utf-8") as f:
-                f.write(json.dumps(ev) + "\n")
-            _written += 1
-            if _written % 200 == 0:
-                _trim()
-        except OSError as e:
-            log.debug("activity: not recorded: %s", e)
+        with open(_path(), "a", encoding="utf-8") as f:
+            f.write(json.dumps(ev) + "\n")
+        _written += 1
+        if _written % 200 == 0:
+            _trim()
 
 
 def _who(m, kind: str) -> str:
@@ -86,10 +92,13 @@ def record_message(m, kind: str, **extra) -> None:
     """*m* is an EmailMessage; its account decides whether anything is kept."""
     if m is None:
         return
-    email = email_for(m.account_id)
-    if email:
-        record(email, kind, subject=(m.subject or "")[:120], who=_who(m, kind),
-               **extra)
+    try:
+        email = email_for(m.account_id)
+        if email:
+            record(email, kind, subject=(m.subject or "")[:120],
+                   who=_who(m, kind), **extra)
+    except Exception as e:
+        log.debug("activity: not recorded: %s", e)
 
 
 def _lines() -> list[str]:
@@ -116,8 +125,12 @@ def _rewrite(lines: list[str]) -> None:
 
 def take() -> tuple[list[dict], int]:
     """The oldest events to send, and how many lines they were (for ack)."""
-    with _lock:
-        lines = _lines()[:BATCH]
+    try:
+        with _lock:
+            lines = _lines()[:BATCH]
+    except Exception as e:
+        log.debug("activity: queue not read: %s", e)
+        return [], 0
     events = []
     for ln in lines:
         try:
@@ -133,9 +146,8 @@ def ack(n: int) -> None:
     """The server took the first *n* lines: drop them, keep anything newer."""
     if n <= 0:
         return
-    with _lock:
-        lines = _lines()
-        try:
-            _rewrite(lines[n:])
-        except OSError as e:
-            log.debug("activity: queue not trimmed: %s", e)
+    try:
+        with _lock:
+            _rewrite(_lines()[n:])
+    except Exception as e:
+        log.debug("activity: queue not trimmed: %s", e)

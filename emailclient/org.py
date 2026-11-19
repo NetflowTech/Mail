@@ -62,12 +62,21 @@ _K_MANAGED = "org_managed"      # {email: {"version", "box", "cfg"}}
 _K_LEASE = "org_lease"          # {"t": server time, "sig": signature}
 _K_DECLINED = "org_declined"    # personal accounts the user kept personal
 _K_HANDED = "org_handed"        # accounts handed over, awaiting the server's answer
+_K_UNKNOWN = "org_unknown"      # {"t": first "unknown device" answer, "n": how many}
 _S_TOKEN = "org:token"
 _S_KEY = "org:key"
 
 # A PC that hasn't heard from the server for this long stops using its managed
 # mailboxes until it does.
 LEASE_SECONDS = 7 * 24 * 3600
+# A PC clock this far behind the server's last signed time is wrong, not just
+# drifting. (Check-in time is in minutes; a few minutes of drift is normal.)
+CLOCK_TOLERANCE = 24 * 3600
+# "This PC was deleted" is acted on (every managed mailbox removed) only when
+# the server itself has said so this many times over at least this long. A
+# single 401, which a proxy or tunnel can produce, is a failed check-in.
+UNKNOWN_CONFIRM_COUNT = 3
+UNKNOWN_CONFIRM_SECONDS = 10 * 60
 
 
 class OrgError(Exception):
@@ -259,12 +268,13 @@ def last_contact() -> float:
 def lease_expired(now: float | None = None) -> bool:
     """True when managed mailboxes must not be used: this PC is joined but its
     last signed server time is older than the limit (or missing, or forged).
-    A clock set back before that time counts as expired too."""
+    A clock set back to well before that time counts as expired too."""
     if not is_joined():
         return False
     last = _lease_time()
     now = time.time() if now is None else now
-    return last <= 0 or now < last - 300 or now - last > lease_seconds()
+    return (last <= 0 or now < last - CLOCK_TOLERANCE
+            or now - last > lease_seconds())
 
 
 # ----- joining / leaving --------------------------------------------------------------
@@ -344,6 +354,7 @@ def enroll(setup_code: str) -> str:
 def leave() -> None:
     """Forget the organization: token, keys and every sealed password."""
     _set(_K_HANDED, "")
+    _set(_K_UNKNOWN, "")
     with _lock:
         for e in list(_managed()):
             _drop_tokens(e)
@@ -468,6 +479,26 @@ def password_for(email: str, servers: str) -> str | None:
 # ----- Google / Microsoft managed mailboxes ----------------------------------------
 
 APP_PROVIDER = {"google": "gmail", "microsoft": "outlook", "password": "custom"}
+# Password mailboxes at these hosts get AMail's provider for them, so the
+# mail code uses the right folder names and sending rules (a Gmail app
+# password is still a Gmail mailbox). "outlook" is never chosen here: in
+# AMail it means Microsoft sign-in, which a password mailbox doesn't have.
+_HOST_PROVIDER = (("gmail.com", "gmail"), ("googlemail.com", "gmail"),
+                  ("yahoo.com", "yahoo"), ("zoho.com", "zoho"),
+                  ("zoho.eu", "zoho"), ("zoho.in", "zoho"),
+                  ("zohomail.com", "zoho"))
+
+
+def app_provider(auth: str, imap_host: str = "") -> str:
+    """AMail's provider name for a managed mailbox: decides which sign-in
+    code and which folder names the mail code uses."""
+    if auth != "password":
+        return APP_PROVIDER[auth]
+    host = (imap_host or "").lower().strip(".")
+    for domain, provider in _HOST_PROVIDER:
+        if host == domain or host.endswith("." + domain):
+            return provider
+    return "custom"
 _TOKEN_URL = {
     "google": "https://oauth2.googleapis.com/token",
     "microsoft": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
@@ -527,8 +558,11 @@ def oauth_access_token(account) -> str | None:
     if kind == "microsoft":
         fields["scope"] = _MS_SCOPE
     payload = _token_request(_TOKEN_URL[kind], fields)
-    if payload is None and rt != sealed_rt:
-        # The kept one stopped working: fall back to the one the admin issued.
+    if payload is None:
+        return None     # the token service wasn't reached: nothing changes
+    if payload.get("error") in _DEAD_TOKEN_ERRORS and rt != sealed_rt:
+        # The kept one is really dead (not a blip): fall back to the one the
+        # admin issued, and forget the dead one.
         _secret_set(_rotated_name(email, version), None)
         fields["refresh_token"] = sealed_rt
         payload = _token_request(_TOKEN_URL[kind], fields)
@@ -541,7 +575,16 @@ def oauth_access_token(account) -> str | None:
     return token
 
 
+# The token service's answers that mean a refresh token is gone for good
+# (revoked, expired, or for another client). Anything else is a passing
+# problem: a timeout, a 5xx, a captive portal's page.
+_DEAD_TOKEN_ERRORS = ("invalid_grant",)
+
+
 def _token_request(url: str, fields: dict) -> dict | None:
+    """The token service's answer. A refusal comes back as {"error": ...};
+    None means it couldn't be reached or didn't answer properly, so nothing
+    should be concluded about the refresh token."""
     import urllib.error
     import urllib.parse
     import urllib.request
@@ -552,14 +595,18 @@ def _token_request(url: str, fields: dict) -> dict | None:
     try:
         with urllib.request.urlopen(req, timeout=20,
                                     context=nethttp.ssl_context()) as r:
-            return json.loads(r.read(64 * 1024) or b"{}")
+            data = json.loads(r.read(64 * 1024) or b"{}")
+            return data if isinstance(data, dict) else None
     except urllib.error.HTTPError as e:
+        if e.code >= 500:
+            log.info("org: token service error HTTP %s", e.code)
+            return None
         try:
             err = json.loads(e.read(4096) or b"{}").get("error")
-        except ValueError:
-            err = e.code
-        log.warning("org: token refresh refused: %s", err)
-        return None
+        except (ValueError, AttributeError):
+            err = None
+        log.warning("org: token refresh refused: %s", err or e.code)
+        return {"error": str(err or e.code)}
     except (OSError, ValueError) as e:
         log.info("org: token refresh failed: %s", e)
         return None
@@ -609,14 +656,41 @@ def checkin(accounts: list[dict], app_version: str, handover: list | None = None
         log.info("org: check-in failed: %s", e)
         return None
     if status == 401:
-        return {"state": "unknown", "managed": []}
+        return _unknown_answer(data)
     if status != 200 or data.get("state") not in ("pending", "approved", "revoked"):
         log.info("org: unexpected check-in answer HTTP %s", status)
         return None
     if not _store_lease(data.get("lease") or {}):
         log.warning("org: check-in answer not signed by the organization's key")
         return None
+    _set(_K_UNKNOWN, "")
     if data.get("new_token"):
         _secret_set(_S_TOKEN, str(data["new_token"]))
     _set(_K_STATE, data["state"])
     return data
+
+
+def _unknown_answer(data: dict) -> dict | None:
+    """HTTP 401 on a check-in. The server says that when it no longer knows
+    this PC (deleted in the panel), but a reverse proxy, tunnel or sign-in
+    layer in front of it says it too, and acting on those would wipe every
+    managed mailbox and its mail. So: only the server's own wording counts,
+    and only once it has been repeated for a while (a proxy hiccup never
+    lasts that long; the lease covers the case where it does). Until then
+    it's just a failed check-in."""
+    if data.get("error") != "unknown device":
+        log.info("org: HTTP 401 without the server's answer; treated as unreachable")
+        return None
+    now = time.time()
+    try:
+        seen = json.loads(_get(_K_UNKNOWN) or "{}")
+        first, n = float(seen["t"]), int(seen["n"])
+    except (ValueError, TypeError, KeyError):
+        first, n = now, 0
+    n += 1
+    if n >= UNKNOWN_CONFIRM_COUNT and now - first >= UNKNOWN_CONFIRM_SECONDS:
+        return {"state": "unknown", "managed": []}
+    _set(_K_UNKNOWN, json.dumps({"t": first, "n": n}))
+    log.warning("org: the server doesn't know this PC (%d of %d, confirming)",
+                n, UNKNOWN_CONFIRM_COUNT)
+    return None

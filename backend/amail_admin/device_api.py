@@ -50,6 +50,7 @@ MAX_ACCOUNTS_REPORTED = 200
 MAX_PENDING = 50                    # waiting PCs; more are refused
 PENDING_EXPIRY = 7 * 86400          # a request nobody approves goes away
 TOKEN_ROTATE_AFTER = 30 * 86400     # PCs get a fresh token this often
+TOKEN_RETRY_AFTER = 10 * 60         # ...and again if the fresh one wasn't taken up
 
 
 def _clip(v, n: int) -> str:
@@ -266,12 +267,20 @@ def create_device_app(store: Store, master_key: bytes, checkin_interval: int,
         # Token rotation: the PC used its new token, so the old one can go; or
         # the current one is old, so issue a replacement (the old stays valid
         # until the PC has used the new one).
+        issued = device["token_issued_at"] or 0
         if th == device["token_hash"] and device["prev_token_hash"]:
             store.retire_prev_token(device["id"])
-        elif (th == device["token_hash"]
-              and time.time() - (device["token_issued_at"] or 0) > TOKEN_ROTATE_AFTER):
+        elif th == device["token_hash"] and time.time() - issued > TOKEN_ROTATE_AFTER:
             new = crypto.new_token()
             store.rotate_token(device["id"], crypto.token_hash(new))
+            out["new_token"] = new
+        elif th == device["prev_token_hash"] and time.time() - issued > TOKEN_RETRY_AFTER:
+            # The PC is still on the old token: the answer carrying the new
+            # one never got stored. Issue another (the old one stays valid
+            # until the PC has used a new one), rather than leaving the old
+            # token valid for ever and rotation stuck.
+            new = crypto.new_token()
+            store.reissue_token(device["id"], crypto.token_hash(new))
             out["new_token"] = new
 
         state = device["status"]

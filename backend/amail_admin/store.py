@@ -227,6 +227,12 @@ class Store:
         self._x("UPDATE devices SET prev_token_hash=token_hash, token_hash=?, "
                 "token_issued_at=? WHERE id=?", (new_hash, time.time(), device_id))
 
+    def reissue_token(self, device_id: str, new_hash: str) -> None:
+        """Replace an issued-but-never-used token; the previous one (which
+        the PC is still using) stays valid."""
+        self._x("UPDATE devices SET token_hash=?, token_issued_at=? WHERE id=?",
+                (new_hash, time.time(), device_id))
+
     def retire_prev_token(self, device_id: str) -> None:
         self._x("UPDATE devices SET prev_token_hash=NULL WHERE id=?", (device_id,))
 

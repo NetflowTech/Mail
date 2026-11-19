@@ -206,7 +206,8 @@ def test_limit_counts_from_the_last_signed_server_time(storage):
     set_lease(storage, now - 8 * 86400)
     assert org.lease_expired(now)
     set_lease(storage, now)
-    assert org.lease_expired(now - 86400)        # clock set back
+    assert org.lease_expired(now - 2 * 86400)    # clock set back
+    assert not org.lease_expired(now - 3600)     # a slow PC clock is just slow
     assert not org.lease_expired(now + 60)
 
 
@@ -365,6 +366,7 @@ class _Fake:
     _handle_collect = _MW._handle_collect
     _queue_declined = _MW._queue_declined
     _account_kind = _MW._account_kind
+    _org_sent = _MW._org_sent
 
     def __init__(self, db, allow_take_over=True):
         self.db, self.engine, self.removed, self.msgs = db, _Engine(), [], []
@@ -683,10 +685,14 @@ def test_handover_asks_once_then_sends_the_password(storage, tmp_path, qtbot, mo
                                 "imap_port": 993, "smtp_host": "my.host",
                                 "smtp_port": 465}]
     assert w._org_declined == [{"email": "nobody@example.com", "reason": "not on this PC"}]
-    assert org.handed() == {"me@example.com"}
     # Still being asked for while the answer is on its way: not asked twice.
     w._apply_org({"state": "approved", "managed": [], "collect": ["me@example.com"]})
     assert w.asked_handover == ["me@example.com"]
+    # Handed over only once the server has taken the check-in that carried it.
+    assert org.handed() == set()
+    w._org_sent(list(w._org_handover), list(w._org_declined), 0)
+    assert org.handed() == {"me@example.com"}
+    assert w._org_handover == [] and w._org_declined == []
     # The server now manages it: applied without the usual take-over question.
     w._apply_org({"state": "approved",
                   "managed": [_item(pub, "me@example.com", host="my.host")]})
@@ -816,3 +822,197 @@ def test_many_accounts_are_asked_for_in_one_dialog(storage, tmp_path, qtbot, mon
     w._apply_org({"state": "approved", "managed": [], "collect": emails})
     assert w.handover_dialogs == 1 and w.asked_handover == emails
     assert [h["email"] for h in w._org_handover] == emails
+
+
+# ----- review fixes: lockout, data loss and reliability -----
+
+def test_a_401_from_a_proxy_is_not_a_removal(storage, monkeypatch):
+    """Only the server's own 'unknown device', repeated over time, means the
+    PC was deleted. A proxy's or tunnel's 401 is just a failed check-in."""
+    joined_device(storage)
+    monkeypatch.setattr(org, "_post", lambda *a, **k: (401, {}))
+    for _ in range(5):
+        assert org.checkin([], "t") is None
+    assert org.is_joined() and org.state() == "approved"
+
+
+def test_the_servers_own_unknown_answer_is_confirmed_over_time(storage, monkeypatch):
+    joined_device(storage)
+    clock = [1_000_000.0]
+    monkeypatch.setattr(org.time, "time", lambda: clock[0])
+    monkeypatch.setattr(org, "_post", lambda *a, **k: (401, {"error": "unknown device"}))
+    assert org.checkin([], "t") is None                     # 1st: not yet
+    clock[0] += 30
+    assert org.checkin([], "t") is None                     # 2nd, 30 s later
+    clock[0] += 30
+    assert org.checkin([], "t") is None                     # 3rd, but only a minute in
+    clock[0] += org.UNKNOWN_CONFIRM_SECONDS
+    assert org.checkin([], "t") == {"state": "unknown", "managed": []}
+
+    # A good answer in between starts the count over.
+    storage[0][org._K_UNKNOWN] = ""
+    assert org.checkin([], "t") is None
+    clock[0] += 30
+    assert org.checkin([], "t") is None
+    good = server_crypto.sign_lease(SERVER_SIGN, "dev1", clock[0])
+    monkeypatch.setattr(org, "_post", lambda *a, **k: (
+        200, {"state": "approved", "managed": [], "lease": good}))
+    assert org.checkin([], "t") is not None
+    monkeypatch.setattr(org, "_post", lambda *a, **k: (401, {"error": "unknown device"}))
+    clock[0] += org.UNKNOWN_CONFIRM_SECONDS
+    assert org.checkin([], "t") is None                     # counting from one again
+
+
+def test_a_failed_sign_in_is_not_retried_every_checkin(storage, tmp_path, qtbot, monkeypatch):
+    """A managed mailbox whose password is wrong stays stopped until the
+    admin changes something; restarting it every 30 s would trip the mail
+    host's lockout."""
+    from emailclient.db import Database
+    pub = joined_device(storage)
+    w = _Fake(Database(tmp_path / "mail.db"))
+    w._apply_org({"state": "approved", "managed": [_item(pub, "a@example.com")]})
+    acc_id = w.db.list_accounts()[0].id
+    assert w.engine.started == ["a@example.com"]
+    # The worker died on a sign-in error.
+    w.engine.workers.pop(acc_id)
+    w.engine.auth_failed.add(acc_id)
+    same = dict(_item(pub, "a@example.com"))
+    same.pop("secret")
+    for _ in range(5):
+        w._apply_org({"state": "approved", "managed": [same]})
+    assert w.engine.started == ["a@example.com"]            # not restarted
+    # The admin entered a new password: that restarts it.
+    w._apply_org({"state": "approved",
+                  "managed": [_item(pub, "a@example.com", version=2, pw="new")]})
+    assert w.engine.started == ["a@example.com", "a@example.com"]
+
+
+def test_a_passing_token_error_keeps_the_rotated_refresh_token(storage, monkeypatch):
+    """Only an explicit invalid_grant means the kept Microsoft refresh token
+    is dead. A timeout, a 5xx or a captive portal must not throw it away."""
+    org._access_cache.clear()
+    grant_oauth(storage, kind="microsoft", email="team@outlook.com")
+    acc = gmail_account("team@outlook.com")
+    rotated = org._rotated_name("team@outlook.com", 1)
+    storage[1][rotated] = "rt-kept"
+    seen = []
+
+    answers = [None]                                   # unreachable
+    monkeypatch.setattr(org, "_token_request",
+                        lambda u, f: seen.append(f["refresh_token"]) or answers.pop(0))
+    assert org.oauth_access_token(acc) is None
+    assert storage[1][rotated] == "rt-kept" and seen == ["rt-kept"]
+
+    answers[:] = [{"error": "temporarily_unavailable"}]
+    assert org.oauth_access_token(acc) is None
+    assert storage[1][rotated] == "rt-kept"             # still kept
+
+    answers[:] = [{"error": "invalid_grant"},            # the kept one is dead
+                  {"access_token": "at", "refresh_token": "rt-new", "expires_in": 3600}]
+    assert org.oauth_access_token(acc) == "at"
+    assert seen[-2:] == ["rt-kept", "rt-1"]             # fell back to the sealed one
+    assert storage[1][rotated] == "rt-new"
+
+
+def test_token_request_tells_a_refusal_from_a_blip(monkeypatch):
+    import io
+    import urllib.error
+    import urllib.request
+
+    def refused(req, timeout, context):
+        raise urllib.error.HTTPError(req.full_url, 400, "Bad Request", {},
+                                     io.BytesIO(b'{"error": "invalid_grant"}'))
+    monkeypatch.setattr(urllib.request, "urlopen", refused)
+    assert org._token_request("https://t.example/token", {}) == {"error": "invalid_grant"}
+
+    def down(req, timeout, context):
+        raise urllib.error.HTTPError(req.full_url, 503, "Unavailable", {}, io.BytesIO(b""))
+    monkeypatch.setattr(urllib.request, "urlopen", down)
+    assert org._token_request("https://t.example/token", {}) is None
+
+    def timeout(req, timeout, context):
+        raise OSError("timed out")
+    monkeypatch.setattr(urllib.request, "urlopen", timeout)
+    assert org._token_request("https://t.example/token", {}) is None
+
+
+def test_recording_never_raises_into_the_caller(storage, queue, monkeypatch):
+    from emailclient import activity
+    joined_device(storage)
+    org.store_grant("sales@example.com", 1, {}, {})
+    monkeypatch.setattr(org, "is_joined",
+                        lambda: (_ for _ in ()).throw(RuntimeError("keychain locked")))
+    activity.record("sales@example.com", "opened", subject="x")       # no raise
+    activity.record("", "app_quit")
+    monkeypatch.undo()
+    monkeypatch.setattr(activity, "_path", lambda: (_ for _ in ()).throw(RuntimeError()))
+    activity.record("sales@example.com", "opened", subject="x")
+    assert activity.take() == ([], 0)
+    activity.ack(3)
+
+
+def test_a_handover_lost_before_delivery_is_asked_for_again(storage, tmp_path, qtbot, monkeypatch):
+    """The password sits only in memory until a check-in carries it. If AMail
+    crashes first, the next start must ask again rather than skip for ever."""
+    from emailclient import credentials
+    from emailclient.db import Database
+    monkeypatch.setattr(credentials.keyring, "get_password",
+                        lambda svc, key: "mypw" if key == "me@example.com" else None)
+    joined_device(storage)
+    db = Database(tmp_path / "mail.db")
+    _personal(db, "me@example.com")
+    w = _Fake(db)
+    w._apply_org({"state": "approved", "managed": [], "collect": ["me@example.com"]})
+    assert w.asked_handover == ["me@example.com"] and org.handed() == set()
+    # Crash before the check-in: a new window, same settings.
+    w2 = _Fake(db)
+    w2._apply_org({"state": "approved", "managed": [], "collect": ["me@example.com"]})
+    assert w2.asked_handover == ["me@example.com"]
+    assert w2._org_handover[0]["password"] == "mypw"
+    # Delivered: now it counts, and isn't asked for again.
+    w2._org_sent(list(w2._org_handover), [], 0)
+    assert org.handed() == {"me@example.com"}
+    w3 = _Fake(db)
+    w3._apply_org({"state": "approved", "managed": [], "collect": ["me@example.com"]})
+    assert w3.asked_handover == []
+
+
+def test_mixed_case_addresses_are_handed_over_and_cleaned_up(storage, tmp_path, qtbot, monkeypatch):
+    """The keychain entry is under the address as the user typed it."""
+    from emailclient import credentials
+    from emailclient.db import Database
+    deleted = []
+    monkeypatch.setattr(credentials.keyring, "get_password",
+                        lambda svc, key: "mypw" if key == "Me@Example.com" else None)
+    monkeypatch.setattr(credentials.keyring, "delete_password",
+                        lambda svc, key: deleted.append(key))
+    pub = joined_device(storage)
+    w = _Fake(Database(tmp_path / "mail.db"))
+    _personal(w.db, "Me@Example.com")
+    w._apply_org({"state": "approved", "managed": [], "collect": ["me@example.com"]})
+    assert w._org_handover and w._org_handover[0]["password"] == "mypw"
+    w._org_sent(list(w._org_handover), [], 0)
+    w._apply_org({"state": "approved",
+                  "managed": [_item(pub, "me@example.com", host="my.host")]})
+    assert org.is_managed("Me@Example.com")
+    assert "Me@Example.com" in deleted
+
+
+def test_managed_password_mailboxes_keep_their_providers_folders(storage, tmp_path, qtbot):
+    """A Gmail mailbox with an app password is still a Gmail mailbox: AMail
+    must use [Gmail]/Sent Mail etc., not the generic names."""
+    from emailclient.db import Database
+    assert org.app_provider("password", "imap.gmail.com") == "gmail"
+    assert org.app_provider("password", "IMAP.GOOGLEMAIL.COM") == "gmail"
+    assert org.app_provider("password", "imap.zoho.eu") == "zoho"
+    assert org.app_provider("password", "mail.example.com") == "custom"
+    assert org.app_provider("password", "outlook.office365.com") == "custom"
+    assert org.app_provider("google", "imap.gmail.com") == "gmail"
+    assert org.app_provider("microsoft", "x") == "outlook"
+
+    pub = joined_device(storage)
+    w = _Fake(Database(tmp_path / "mail.db"))
+    w._apply_org({"state": "approved",
+                  "managed": [_item(pub, "team@gmail.com", host="imap.gmail.com")]})
+    acc = w.db.list_accounts()[0]
+    assert acc.provider == "gmail" and org.auth_kind("team@gmail.com") == "password"

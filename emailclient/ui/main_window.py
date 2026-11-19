@@ -1503,12 +1503,7 @@ class MainWindow(QMainWindow):
                 resp = org.checkin(snapshot, __version__, handover, declined,
                                    events)
                 if resp is not None:
-                    activity.ack(taken)
-                    with self._org_lock:
-                        self._org_handover = [h for h in self._org_handover
-                                              if h not in handover]
-                        self._org_declined = [d for d in self._org_declined
-                                              if d not in declined]
+                    self._org_sent(handover, declined, taken)
             finally:
                 self._org_failed_last = resp is None
                 self._org_busy = False
@@ -1519,6 +1514,20 @@ class MainWindow(QMainWindow):
                     pass   # window torn down between the check and the emit
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _org_sent(self, handover: list, declined: list, taken: int) -> None:
+        """The server took a check-in: what it carried needn't go again. An
+        account counts as handed over only now, once its password has really
+        reached the server; a hand-over lost to a crash before that is asked
+        for again next time."""
+        activity.ack(taken)
+        for h in handover:
+            org.set_handed(h["email"], True)
+        with self._org_lock:
+            self._org_handover = [h for h in self._org_handover
+                                  if h not in handover]
+            self._org_declined = [d for d in self._org_declined
+                                  if d not in declined]
 
     def _enforce_org_lease(self) -> None:
         """Too long without reaching the server: stop the managed mailboxes
@@ -1541,11 +1550,15 @@ class MainWindow(QMainWindow):
 
     def _resume_after_lease(self) -> None:
         """The server answered: run every managed mailbox that isn't running
-        (paused by the limit, or skipped at startup while it had run out)."""
+        (paused by the limit, or skipped at startup while it had run out).
+        Not one whose sign-in failed: retrying that every check-in would
+        hammer the mail host (and trip its lockout) until the admin fixes
+        the password, which restarts it through the normal path."""
         was_paused, self._org_lease_paused = self._org_lease_paused, False
         for a in self.db.list_accounts():
             w = self.engine.workers.get(a.id)
             if (org.is_managed(a.email) and not a.paused
+                    and a.id not in self.engine.auth_failed
                     and not (w and w.isRunning())):
                 self.engine.start_account(a)
         if was_paused:
@@ -1634,7 +1647,9 @@ class MainWindow(QMainWindow):
                 self._queue_declined(email, "not on this PC")
                 continue
             kind = self._account_kind(acc)
-            password = credentials.get_password(email) if kind == "password" else None
+            # The keychain entry is under the address as the user typed it.
+            password = (credentials.get_password(acc.email)
+                        if kind == "password" else None)
             if not password:
                 self._queue_declined(email, {
                     "google": "signs in with Google",
@@ -1655,8 +1670,7 @@ class MainWindow(QMainWindow):
                         "display_name": acc.name, "imap_host": acc.imap_host,
                         "imap_port": acc.imap_port, "smtp_host": acc.smtp_host,
                         "smtp_port": acc.smtp_port})
-                org.set_handed(email, True)
-                queued = True
+                queued = True      # org.set_handed once the server has taken it
         if queued or self._org_declined:
             QTimer.singleShot(0, self._org_tick)     # don't wait for the timer
 
@@ -1742,7 +1756,8 @@ class MainWindow(QMainWindow):
             acc = local.get(email)
             if acc is None:
                 new = Account(id=None, name=cfg["name"] or email.split("@")[0],
-                              email=email, provider=org.APP_PROVIDER[cfg["auth"]],
+                              email=email,
+                              provider=org.app_provider(cfg["auth"], cfg["imap_host"]),
                               imap_host=cfg["imap_host"],
                               imap_port=cfg["imap_port"],
                               smtp_host=cfg["smtp_host"],
@@ -1764,9 +1779,11 @@ class MainWindow(QMainWindow):
                     **({"name": cfg["name"]} if cfg["name"] else {}))
                 # Password <-> Google / Microsoft sign-in decides which login
                 # code the mail engine uses.
-                self.db.set_account_provider(acc.id, org.APP_PROVIDER[cfg["auth"]])
-                # A password the user typed before is no longer needed.
-                credentials.delete_stored_password(email)
+                self.db.set_account_provider(
+                    acc.id, org.app_provider(cfg["auth"], cfg["imap_host"]))
+                # A password the user typed before is no longer needed. It's
+                # stored under the address as they typed it.
+                credentials.delete_stored_password(acc.email)
                 if personal:
                     activity.record(email, "signed_in")
                 self.engine.stop_account(acc.id)
