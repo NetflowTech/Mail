@@ -188,8 +188,13 @@ def login_interactive(email: str) -> str:
     return _exchange_code(email, code, redirect_uri, verifier)
 
 
-def get_token(email: str) -> str | None:
-    """Access token via cached value or refresh token; None if re-login needed."""
+def get_token(email: str, account=None) -> str | None:
+    """Access token via cached value or refresh token; None if re-login needed.
+    An organization-managed mailbox gets its token from the organization's
+    sealed sign-in (pass the account: it's bound to the account's servers)."""
+    from . import org
+    if org.is_managed(email):
+        return org.oauth_access_token(account) if account is not None else None
     cached = _token_cache.get(email)
     if cached and cached[1] > time.time():
         return cached[0]
@@ -229,4 +234,7 @@ def forget(email: str) -> None:
 
 def has_login(email: str) -> bool:
     """True if a Google refresh token is stored for this address."""
+    from . import org
+    if org.is_managed(email):
+        return org.auth_kind(email) == "google"
     return keyring.get_password(APP_NAME, _refresh_key(email)) is not None

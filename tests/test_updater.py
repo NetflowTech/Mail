@@ -193,6 +193,7 @@ class TestEveryUpdatePathIsSigned:
                     callers.append(path.name)
                     kws = {k.arg for k in node.keywords}
                     assert "sig_url" in kws, f"{path} calls download_and_verify without sig_url"
+                    assert "version" in kws, f"{path} calls download_and_verify without version"
         assert callers, "expected at least one caller"
 
 
@@ -290,3 +291,91 @@ class TestFetchManifestShape:
     def test_normal_manifest_parses(self, monkeypatch):
         u = self._serve(monkeypatch, b'{"version": "2.0.99", "notes": "hi"}')
         assert u.fetch_manifest("https://x/version.json") == {"version": "2.0.99", "notes": "hi"}
+
+
+class TestSignatureIsBoundToTheVersion:
+    """The signature proves the file is ours; the version in its trusted
+    comment proves it is the release the manifest claims, so an old signed
+    build can't be served as a newer one."""
+
+    @staticmethod
+    def _sign(tmp_path, monkeypatch, data: bytes, trusted: str):
+        import base64
+        import hashlib
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        import emailclient.updater as u
+        key = Ed25519PrivateKey.generate()
+        pub = key.public_key().public_bytes(serialization.Encoding.Raw,
+                                            serialization.PublicFormat.Raw)
+        key_id = b"\x01\x02\x03\x04\x05\x06\x07\x08"
+        monkeypatch.setattr(u, "_MINISIGN_PUBLIC_KEY",
+                            base64.b64encode(b"Ed" + key_id + pub).decode())
+        f = tmp_path / "AMail.zip"
+        f.write_bytes(data)
+        sig = key.sign(hashlib.blake2b(data, digest_size=64).digest())
+        glob = key.sign(sig + trusted.encode())
+        s = tmp_path / "AMail.zip.minisig"
+        s.write_text("untrusted comment: x\n"
+                     + base64.b64encode(b"ED" + key_id + sig).decode() + "\n"
+                     + "trusted comment: " + trusted + "\n"
+                     + base64.b64encode(glob).decode() + "\n")
+        return f, s
+
+    def test_matching_version_passes(self, tmp_path, monkeypatch):
+        import emailclient.updater as u
+        f, s = self._sign(tmp_path, monkeypatch, b"build", "timestamp:1 version:2.0.15 file:AMail.zip")
+        assert u._verify_minisign(f, s, "2.0.15")
+        assert u._verify_minisign(f, s)                     # no version asked: file check only
+
+    def test_other_or_missing_version_fails(self, tmp_path, monkeypatch):
+        import emailclient.updater as u
+        f, s = self._sign(tmp_path, monkeypatch, b"build", "timestamp:1 version:2.0.14")
+        assert not u._verify_minisign(f, s, "2.0.15")       # an old build called new
+        f, s = self._sign(tmp_path, monkeypatch, b"build", "timestamp:1 file:AMail.zip")
+        assert not u._verify_minisign(f, s, "2.0.15")       # signed without a version
+        assert u.signed_version("timestamp:1 version:2.0.15") == "2.0.15"
+        assert u.signed_version("timestamp:1") is None
+
+    def test_download_needs_the_manifest_version(self, tmp_path, monkeypatch):
+        import emailclient.updater as u
+        monkeypatch.setattr(u.urllib.request, "urlopen",
+                            lambda *a, **k: (_ for _ in ()).throw(AssertionError("no download")))
+        assert u.download_and_verify("https://x/a.zip", "a" * 64, tmp_path / "a.zip",
+                                     sig_url="https://x/a.zip.minisig") is False
+        assert u.download_and_verify("https://x/a.zip", "a" * 64, tmp_path / "a.zip",
+                                     sig_url="https://x/a.zip.minisig", version=" ") is False
+
+
+class TestVersionCheckIsForgivingAndExplains:
+    def test_same_release_however_written(self):
+        from emailclient.updater import same_version
+        assert same_version("2.0.15", "v2.0.15")
+        assert same_version(" 2.0.15 ", "2.0.15.0")
+        assert same_version("V2.0.15", "2.0.15")
+        assert not same_version("2.0.15", "2.0.16")
+        assert not same_version("2.0.15", "2.0")
+        assert not same_version("junk", "junk")
+        assert not same_version("", "")
+
+    def test_field_is_found_in_minisigns_own_comment_layout(self):
+        from emailclient.updater import signed_version
+        # minisign separates fields with tabs; either spelling, any case
+        assert signed_version("timestamp:1700000000\tfile:AMail.zip\tversion:2.0.15") == "2.0.15"
+        assert signed_version("Version=2.0.15 timestamp:1") == "2.0.15"
+        assert signed_version("timestamp:1\tfile:x\tprehashed") is None
+
+    def test_a_refusal_says_why(self, tmp_path, monkeypatch):
+        import emailclient.updater as u
+        sign = TestSignatureIsBoundToTheVersion._sign
+        f, s = sign(tmp_path, monkeypatch, b"build", "timestamp:1 version:2.0.14")
+        assert not u._verify_minisign(f, s, "v2.0.15")
+        assert u.last_failure() == "the signature is for version 2.0.14, not v2.0.15"
+        f, s = sign(tmp_path, monkeypatch, b"build", "timestamp:1")
+        assert not u._verify_minisign(f, s, "2.0.15")
+        assert "without a version" in u.last_failure()
+        f, s = sign(tmp_path, monkeypatch, b"build", "version:v2.0.15")
+        assert u._verify_minisign(f, s, "2.0.15")
+        assert u.download_and_verify("https://x/a.zip", "a" * 64, tmp_path / "a.zip",
+                                     sig_url="https://x/a.zip.minisig") is False
+        assert u.last_failure() == "version.json names no version"

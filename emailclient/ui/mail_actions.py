@@ -1,6 +1,8 @@
 """Shared message actions used by MainWindow and GroupWindow."""
 from __future__ import annotations
 
+from .. import activity
+
 
 def bulk_discard(db, ids: list[int], op: str) -> int:
     """Move messages to TRASH/SPAM (queueing server ops) or purge from Trash.
@@ -14,6 +16,9 @@ def bulk_discard(db, ids: list[int], op: str) -> int:
         m = db.get_message(msg_id)
         if m is None:
             continue
+        activity.record_message(
+            m, "deleted_forever" if (m.folder == "TRASH" and op == "delete")
+            else "deleted" if op == "delete" else "spam")
         if m.folder == "TRASH" and op == "delete":
             # Already in Trash: delete it for good, here and on the server.
             # The server copy is found by Message-ID, not uid: a mail moved to
@@ -42,6 +47,7 @@ def bulk_restore(db, ids: list[int]) -> int:
         m = db.get_message(msg_id)
         if m is None or m.folder not in ("TRASH", "SPAM"):
             continue
+        activity.record_message(m, "restored")
         if m.uid > 0:
             db.add_op(m.account_id, "move", m.folder, m.uid, target="INBOX")
         db.move_message_local(msg_id, "INBOX")

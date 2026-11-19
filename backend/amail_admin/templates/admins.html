@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Admins · AMail Admin{% endblock %}
+{% block body %}
+<h1>Admins</h1>
+<p class="lede">People who can sign in to this panel. Each has their own password, and sets up two-step sign-in on their phone the first time they sign in.</p>
+
+<table class="tbl">
+  <thead><tr><th>Admin</th><th>Two-step sign-in</th><th>Added</th></tr></thead>
+  <tbody>
+  {% for a in admins %}
+  <tr>
+    <td><b>{{ a.username }}</b>{% if a.username|lower == me|lower %} <span class="you">(you)</span>{% endif %}</td>
+    <td>{% if a.totp_secret %}<span class="st ok">Set up</span>{% else %}<span class="st warn">At first sign-in</span>{% endif %}</td>
+    <td class="dim">{{ a.created_at|ago }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<section>
+  <h2>Add an admin</h2>
+  <form method="post" action="{{ url_for('admin_add') }}" class="form">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Username <input name="username" maxlength="40" required autocomplete="off" placeholder="letters, digits, dots, dashes"></label>
+    <label>Their password, 12 characters or more <input name="password" type="password" minlength="12" required autocomplete="new-password"></label>
+    <label class="wide">Your own password, to confirm <input name="confirm" type="password" required autocomplete="current-password"></label>
+    <div class="wide"><button class="primary">Add admin</button></div>
+  </form>
+  <p class="hint">Give them the username and password in person. They're asked to set up two-step sign-in when they first sign in, and should then change the password in Settings.</p>
+</section>
+
+{% if admins|length > 1 or admins[0].totp_secret %}
+<section>
+  <h2>Reset or remove an admin</h2>
+  <form method="post" action="{{ url_for('admin_reset_two_step') }}" class="row-form">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Reset two-step sign-in for
+      <select name="username" required>{% for a in admins if a.totp_secret %}<option value="{{ a.username }}">{{ a.username }}</option>{% endfor %}</select></label>
+    <label>Your own password <input name="confirm" type="password" required autocomplete="current-password"></label>
+    <button>Reset two-step</button>
+  </form>
+  <p class="hint">For an admin who lost or replaced their phone. They set it up again the next time they sign in.</p>
+  {% if admins|length > 1 %}
+  <form method="post" action="{{ url_for('admin_remove') }}" class="row-form">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Remove
+      <select name="username" required>{% for a in admins if a.username|lower != me|lower %}<option value="{{ a.username }}">{{ a.username }}</option>{% endfor %}</select></label>
+    <label>Your own password <input name="confirm" type="password" required autocomplete="current-password"></label>
+    <button class="danger">Remove admin</button>
+  </form>
+  <p class="hint">They're signed out at once and can't sign in again. You can't remove yourself.</p>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

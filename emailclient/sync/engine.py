@@ -43,6 +43,13 @@ class SyncEngine(QObject):
     def start_account(self, account):
         if getattr(account, "paused", False):
             return  # user paused this account — no worker
+        from .. import org
+        if org.is_managed(account.email) and org.lease_expired():
+            # Managed mailbox on a PC that hasn't reached the organization's
+            # server for too long: wait until it does (MainWindow restarts it).
+            log.warning("start_account: %s paused, organization server not "
+                        "reached recently", account.email)
+            return
         if account.email.lower() in self.db.get_blocklist():
             # Removed license-wide by the admin: never sync, even if re-added.
             log.warning("start_account: %s is blocklisted — refusing",

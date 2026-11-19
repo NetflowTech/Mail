@@ -1,0 +1,6 @@
+<label>Email address <input name="email" type="email" value="{{ form.email or '' }}" required {% if lock_email %}readonly{% endif %}></label>
+<label>Display name <input name="display_name" value="{{ form.display_name or '' }}" maxlength="120" placeholder="Shown as the sender name"></label>
+<label>Incoming (IMAP) server <input name="imap_host" value="{{ form.imap_host or '' }}" required placeholder="mail.example.com"></label>
+<label>IMAP port <input name="imap_port" value="{{ form.imap_port or 993 }}" inputmode="numeric" required></label>
+<label>Outgoing (SMTP) server <input name="smtp_host" value="{{ form.smtp_host or '' }}" required placeholder="mail.example.com"></label>
+<label>SMTP port <input name="smtp_port" value="{{ form.smtp_port or 465 }}" inputmode="numeric" required></label>

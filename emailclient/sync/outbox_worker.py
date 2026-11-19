@@ -218,7 +218,7 @@ class OutboxWorker(QThread):
                     # Should never reach here (outlook skipped above), but guard anyway
                     return
                 else:
-                    password = credentials.get_password(account.email) or ""
+                    password = credentials.password_for_account(account) or ""
                     client.login(account.email, password)
                 raw = msg.as_bytes()
                 client.append(sent_folder, raw)

@@ -552,7 +552,7 @@ class ImapWorker(QThread):
         client = IMAPClient(self.account.imap_host, port=self.account.imap_port,
                             ssl=True, ssl_context=nethttp.ssl_context())
         if self.account.provider == "outlook":
-            token = oauth.get_token(self.account.email)
+            token = oauth.get_token(self.account.email, self.account)
             if not token:
                 self.status_changed.emit(self.account.id, "error")
                 log.error("no valid Microsoft token for %s", self.account.email)
@@ -560,7 +560,7 @@ class ImapWorker(QThread):
             client.oauth2_login(self.account.email, token)
         elif (self.account.provider == "gmail"
               and google_oauth.has_login(self.account.email)):
-            token = google_oauth.get_token(self.account.email)
+            token = google_oauth.get_token(self.account.email, self.account)
             if not token:
                 self.status_changed.emit(self.account.id, "error")
                 log.error("no valid Google token for %s", self.account.email)
@@ -569,7 +569,7 @@ class ImapWorker(QThread):
         else:
             # gmail without a Google login falls through here — app-password
             # accounts keep working unchanged.
-            password = credentials.get_password(self.account.email)
+            password = credentials.password_for_account(self.account)
             if not password:
                 self.status_changed.emit(self.account.id, "error")
                 raise AuthError("no password stored")

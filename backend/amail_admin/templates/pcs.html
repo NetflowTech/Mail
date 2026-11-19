@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}PCs · AMail Admin{% endblock %}
+{% block body %}
+<h1>PCs</h1>
+<p class="lede">Every PC that has joined. To add one, use the setup code in <a href="{{ url_for('settings_page') }}">Settings</a>.</p>
+
+{% if views %}
+<table class="tbl">
+  <thead>
+    <tr><th>PC</th><th>Status</th><th>Last seen</th><th>Mailboxes</th><th>System</th><th>AMail</th></tr>
+  </thead>
+  <tbody>
+  {% for v in views %}
+    <tr class="{{ v.d.status }}">
+      <td><a class="strong" href="{{ url_for('device_page', device_id=v.d.id) }}">{{ v.d.name }}</a>{% if v.d.note %}<span class="sub">{{ v.d.note }}</span>{% endif %}</td>
+      <td><span class="st {{ v.tag }}">{{ v.state_label }}</span></td>
+      <td class="nowrap">{% if v.d.status != 'pending' %}{{ v.d.last_seen|ago }}{% if v.d.last_ip %}<span class="sub">{{ v.d.last_ip }}</span>{% endif %}{% else %}<span class="dim">asked {{ v.d.created_at|ago }}</span>{% endif %}</td>
+      <td>{% for a in v.accounts %}<span class="st {{ a.tone }}" title="{{ a.label }}">{{ a.email }}</span>{% if not loop.last %}<br>{% endif %}{% else %}<span class="dim">none</span>{% endfor %}</td>
+      <td class="dim">{{ v.d.os or '?' }}</td>
+      <td class="dim">{{ v.d.app_version or '?' }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No PCs yet.</p>
+{% endif %}
+{% endblock %}

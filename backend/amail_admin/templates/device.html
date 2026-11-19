@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+{% block title %}{{ v.d.name }} · AMail Admin{% endblock %}
+{% block body %}
+<p class="crumb"><a href="{{ url_for('pcs_page') }}">PCs</a> /</p>
+<h1>{{ v.d.name }} <span class="st {{ v.tag }}">{{ v.state_label }}</span></h1>
+<p class="lede">{% if v.d.note %}{{ v.d.note }}. {% endif %}{{ v.d.os or 'Unknown system' }}, AMail {{ v.d.app_version or '?' }}. Added {{ v.d.created_at|ago }}, last seen {{ v.d.last_seen|ago }}{% if v.d.last_ip %} from {{ v.d.last_ip }}{% endif %}.</p>
+
+{% if v.d.status == 'pending' %}
+<div class="attention">
+  <h2>This PC wants to join</h2>
+  <ul><li>
+    <div class="what">On the PC, open <b>AMail → Settings → Organization</b> and read the check code it shows. Type it here. A match proves the request came from that PC.</div>
+    <form method="post" action="{{ url_for('device_approve', device_id=v.d.id) }}">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input name="check_code" maxlength="12" required autocomplete="off" placeholder="XXXX-XXXX" aria-label="Check code shown on the PC">
+      <button class="primary small">Approve this PC</button>
+    </form>
+  </li></ul>
+</div>
+{% endif %}
+
+{% if v.d.status == 'approved' %}
+<section>
+  <h2>Mailboxes on this PC</h2>
+  {% if v.accounts %}
+  <table class="tbl">
+    <thead><tr><th>Mailbox</th><th>State</th><th></th></tr></thead>
+    <tbody>
+    {% for a in v.accounts %}
+    <tr>
+      <td><b>{{ a.email }}</b>{% if a.mailbox and a.mailbox.display_name %}<span class="sub">{{ a.mailbox.display_name }}</span>{% endif %}</td>
+      <td><span class="st {{ a.tone }}">{{ a.label }}</span></td>
+      <td class="act">{% if a.granted %}
+        <form method="post" action="{{ url_for('device_ungrant', device_id=v.d.id) }}">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="mailbox_id" value="{{ a.mailbox.id }}">
+          <button class="small">Sign out</button>
+        </form>{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="dim">None yet.</p>{% endif %}
+  {% if v.accounts|length > 1 %}
+  <form method="post" action="{{ url_for('device_ungrant_all', device_id=v.d.id) }}" class="confirm">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="check"><input type="checkbox" required> Sign this PC out of all {{ v.accounts|length }} mailboxes</label>
+    <button class="danger small">Sign out of all</button>
+  </form>
+  {% endif %}
+  <details class="help"><summary>What the states mean</summary><p><b>Signed in</b>: working on the PC. <b>Signing in…</b>: the PC picks it up within a minute. <b>Waiting for PC to come online</b>: happens as soon as the PC is next on. <b>Paused on PC</b>: the PC hasn't reached this server for 7 days; its company mailboxes are paused until it does. <b>Can't sign in</b>: usually the password was changed at the mail host; update it on the mailbox's page.</p></details>
+</section>
+
+<section id="add">
+  <h2>Add mailboxes to this PC</h2>
+  {% if available or q %}
+  <form method="get" action="{{ url_for('device_page', device_id=v.d.id) }}#add" class="row-form" style="margin: 0 0 10px">
+    <label>Search <input name="q" value="{{ q }}" placeholder="address, name or server"></label>
+    <button>Show</button>
+    {% if q %}<a href="{{ url_for('device_page', device_id=v.d.id) }}#add" class="small">Clear</a>{% endif %}
+  </form>
+  {% endif %}
+  {% if available %}
+  <form method="post" action="{{ url_for('device_grant', device_id=v.d.id) }}" id="pick">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <table class="tbl">
+      <thead><tr><th></th><th>Mailbox</th><th>Server</th></tr></thead>
+      <tbody>
+      {% for m in available %}
+      <tr>
+        <td class="act"><input type="checkbox" name="mailbox_id" value="{{ m.id }}" id="mb{{ m.id }}" aria-label="{{ m.email }}"></td>
+        <td><label for="mb{{ m.id }}" style="display:inline; color: inherit; font-size: 14px; cursor: pointer">{{ m.email }}{% if m.display_name %} <span class="dim">{{ m.display_name }}</span>{% endif %}</label></td>
+        <td class="dim">{% if m.auth == 'google' %}Google{% elif m.auth == 'microsoft' %}Microsoft{% else %}{{ m.imap_host }}{% endif %}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </form>
+  <div class="actions">
+    <button class="primary" form="pick">Sign in to the ticked mailboxes</button>
+    <form method="post" action="{{ url_for('device_grant', device_id=v.d.id) }}" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      {% for m in available %}<input type="hidden" name="mailbox_id" value="{{ m.id }}">{% endfor %}
+      <button>Sign in to all {{ available|length }} shown</button>
+    </form>
+  </div>
+  {% if available_total > available|length %}<p class="hint">Showing the first {{ available|length }} of {{ available_total }}. Search to narrow it down.</p>{% endif %}
+  {% elif q %}<p class="dim">No mailbox matches "{{ q }}" that isn't already on this PC.</p>
+  {% elif v.accounts %}<p class="dim">Every mailbox is on this PC. <a href="{{ url_for('mailboxes') }}">Add more mailboxes</a>.</p>
+  {% else %}<p class="dim"><a href="{{ url_for('mailboxes') }}">Add mailboxes</a> first, then sign this PC in to them.</p>{% endif %}
+  {% if others %}
+  <form method="post" action="{{ url_for('device_copy', device_id=v.d.id) }}" class="row-form">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Or copy every mailbox from
+      <select name="source" required>{% for d in others %}<option value="{{ d.id }}">{{ d.name }}</option>{% endfor %}</select></label>
+    <button>Copy mailboxes</button>
+  </form>
+  {% endif %}
+</section>
+
+<section>
+  <h2>Accounts the user added</h2>
+  {% if v.personal_rows %}
+  <p class="dim">Set up on the PC by the person using it, with their own password. Take one over to make it a company mailbox: AMail asks them to allow it, then the saved password moves to this server and off the PC.</p>
+  <table class="tbl">
+    <thead><tr><th>Account</th><th>Signs in with</th><th>Hand-over</th><th></th></tr></thead>
+    <tbody>
+    {% for p in v.personal_rows %}
+    {% set t = p.takeover %}
+    <tr>
+      <td><b>{{ p.email }}</b></td>
+      <td class="dim">{{ {'password': 'Password', 'google': 'Google', 'microsoft': 'Microsoft'}.get(p.kind, p.kind) }}</td>
+      <td>
+        {% if t and t.status == 'pending' %}<span class="st warn">Waiting for the user to allow it</span>
+        {% elif t and t.status == 'declined' %}<span class="st bad">Declined{% if t.note %}: {{ t.note }}{% endif %}</span>
+        {% elif t and t.status == 'failed' %}<span class="st bad">Failed: {{ t.note }}</span>
+        {% elif t and t.status == 'ignored' %}<span class="st off">Left personal</span>
+        {% elif t and t.status == 'done' %}<span class="st ok">Handed over, PC switching</span>
+        {% elif p.kind != 'password' %}<span class="dim">Can't be handed over. Add it under <a href="{{ url_for('mailboxes') }}">Mailboxes</a> with {{ 'Google' if p.kind == 'google' else 'Microsoft' }} sign-in, then sign this PC in.</span>
+        {% else %}<span class="dim">Not asked</span>{% endif %}
+      </td>
+      <td class="act">
+        {% if t and t.status == 'pending' %}
+        <form method="post" action="{{ url_for('device_takeover_cancel', device_id=v.d.id) }}" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="email" value="{{ p.email }}">
+          <button class="small">Withdraw</button>
+        </form>
+        {% elif p.kind == 'password' %}
+        <form method="post" action="{{ url_for('device_takeover', device_id=v.d.id) }}" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="email" value="{{ p.email }}">
+          <button class="primary small">Take over</button>
+        </form>
+        {% if not (t and t.status == 'ignored') %}
+        <form method="post" action="{{ url_for('device_takeover_ignore', device_id=v.d.id) }}" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="email" value="{{ p.email }}">
+          <button class="small">Leave personal</button>
+        </form>
+        {% endif %}
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% set askable = v.personal_rows|selectattr('kind', 'equalto', 'password')|list %}
+  {% if askable|length > 1 %}
+  <form method="post" action="{{ url_for('device_takeover', device_id=v.d.id) }}" class="actions">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="all" value="1">
+    <button>Take over all password accounts</button>
+  </form>
+  {% endif %}
+  {% else %}<p class="dim">None. Every account on this PC is managed by you.</p>{% endif %}
+</section>
+{% endif %}
+
+{% if v.d.status == 'approved' %}
+<section>
+  <h2>Recent activity</h2>
+  {% if recent %}
+  <table class="tbl">
+    <tbody>
+    {% for r in recent %}
+    <tr><td class="nowrap dim">{{ r.at|when }}</td><td class="dim">{{ r.email or '–' }}</td><td>{{ r.text }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="hint"><a href="{{ url_for('users_page', pc=v.d.id) }}">Everything recorded for this PC</a></p>
+  {% else %}<p class="dim">Nothing recorded yet. Entries arrive within a minute of the action, while the PC is online.</p>{% endif %}
+</section>
+{% endif %}
+
+<section>
+  <h2>Name and note</h2>
+  <form method="post" action="{{ url_for('device_edit', device_id=v.d.id) }}" class="form">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Name <input name="name" value="{{ v.d.name }}" maxlength="80" required></label>
+    <label>Note <input name="note" value="{{ v.d.note }}" maxlength="120" placeholder="Reception desk, Ali's laptop…"></label>
+    <div class="wide"><button class="primary">Save</button></div>
+  </form>
+</section>
+
+<section>
+  {% if v.d.status == 'pending' %}
+  <h2>Turn this request away</h2>
+  <p class="dim">If the check code doesn't match, or you don't recognise the PC.</p>
+  <form method="post" action="{{ url_for('device_delete', device_id=v.d.id) }}" class="confirm">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="check"><input type="checkbox" required> Yes, turn {{ v.d.name }} away</label>
+    <button class="danger">Turn away</button>
+  </form>
+  {% elif v.d.status == 'revoked' %}
+  <h2>Remove this PC</h2>
+  <p class="dim">It's blocked. Once it has been online since being blocked, its company mailboxes are gone from it and it can be removed from the list.</p>
+  <form method="post" action="{{ url_for('device_delete', device_id=v.d.id) }}" class="confirm">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="check"><input type="checkbox" required> Remove {{ v.d.name }} from the list{% if v.accounts %} (it still reports company mailboxes: wait until it has been online){% endif %}</label>
+    <button class="danger">Remove PC</button>
+  </form>
+  {% else %}
+  <h2>Block this PC</h2>
+  <p class="dim">Signs it out of every company mailbox within a minute of it being online. It can't come back without being approved again.</p>
+  <form method="post" action="{{ url_for('device_block', device_id=v.d.id) }}" class="confirm">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="check"><input type="checkbox" required> Yes, block {{ v.d.name }}</label>
+    <button class="danger">Block PC</button>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

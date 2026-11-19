@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}AMail Admin{% endblock %}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='panel.css') }}">
+</head>
+<body>
+{% if user %}
+<div class="shell">
+<aside class="side">
+  <a class="brand" href="{{ url_for('dashboard') }}">AMail <span>Admin</span></a>
+  <a class="nav {{ 'on' if request.endpoint == 'dashboard' }}" href="{{ url_for('dashboard') }}">Overview{% if pending %} <span class="count" title="{{ pending }} waiting for approval">{{ pending }}</span>{% endif %}</a>
+  <a class="nav {{ 'on' if request.endpoint in ('pcs_page', 'device_page') }}" href="{{ url_for('pcs_page') }}">PCs</a>
+  <a class="nav {{ 'on' if request.endpoint in ('mailboxes', 'mailbox_page', 'mailbox_oauth') }}" href="{{ url_for('mailboxes') }}">Mailboxes</a>
+  <a class="nav {{ 'on' if request.endpoint == 'users_page' }}" href="{{ url_for('users_page') }}">Users</a>
+  <a class="nav {{ 'on' if request.endpoint == 'admins_page' }}" href="{{ url_for('admins_page') }}">Admins</a>
+  <a class="nav {{ 'on' if request.endpoint == 'settings_page' }}" href="{{ url_for('settings_page') }}">Settings</a>
+  <a class="nav {{ 'on' if request.endpoint == 'audit_page' }}" href="{{ url_for('audit_page') }}">Activity</a>
+  <form method="post" action="{{ url_for('logout') }}" class="me">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <b>{{ user }}</b><button class="link">Sign out</button>
+  </form>
+</aside>
+<main>
+{% for a in alerts %}<div class="notice bad">{{ a }}</div>{% endfor %}
+{% with msgs = get_flashed_messages(with_categories=true) %}
+  {% for tone, msg in msgs %}<div class="notice {{ tone }}">{{ msg }}</div>{% endfor %}
+{% endwith %}
+{% block body %}{% endblock %}
+</main>
+</div>
+{% else %}
+<div class="login-wrap">
+<div>
+  {% with msgs = get_flashed_messages(with_categories=true) %}
+  {% for tone, msg in msgs %}<div class="notice {{ tone }}">{{ msg }}</div>{% endfor %}
+  {% endwith %}
+  {% block login %}{% endblock %}
+</div>
+</div>
+{% endif %}
+</body>
+</html>

@@ -42,8 +42,13 @@ def login_interactive(email: str) -> str:
     return result["access_token"]
 
 
-def get_token(email: str) -> str | None:
-    """Silent token (refresh if needed); None if re-login required."""
+def get_token(email: str, account=None) -> str | None:
+    """Silent token (refresh if needed); None if re-login required.
+    An organization-managed mailbox gets its token from the organization's
+    sealed sign-in (pass the account: it's bound to the account's servers)."""
+    from . import org
+    if org.is_managed(email):
+        return org.oauth_access_token(account) if account is not None else None
     cache = _load_cache()
     app = _app(cache)
     accounts = [a for a in app.get_accounts()

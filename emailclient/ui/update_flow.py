@@ -31,15 +31,18 @@ def run_update_flow(parent, manifest: dict) -> None:
 
     def _worker():
         ok = updater.download_and_verify(url, sha, dest, progress=_progress,
-                                         sig_url=sig_url)
+                                         sig_url=sig_url,
+                                         version=str(manifest.get("version", "")))
         QTimer.singleShot(0, lambda: _finish(ok))
 
     def _finish(ok):
         dlg.close()
         if not ok:
+            why = updater.last_failure()
             QMessageBox.warning(parent, "Update failed",
-                                "The update could not be downloaded or verified. "
-                                "Please try again later.")
+                                "The update could not be downloaded or verified"
+                                + (f": {why}." if why else ".")
+                                + "\n\nPlease try again later.")
             return
         if updater.apply_update(dest):
             # installer/helper takes over and relaunches, but quit() is a
