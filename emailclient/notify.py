@@ -20,6 +20,27 @@ _TERMINAL_NOTIFIER = shutil.which("terminal-notifier") or (
     if os.path.exists("/opt/homebrew/bin/terminal-notifier") else None)
 
 
+def windows_safe_text(text: str) -> str:
+    """Notification text (a sender name or a subject, so chosen by whoever
+    sent the email) made safe to hand to winotify on Windows.
+
+    winotify shows a banner by string-formatting the title and body into a
+    PowerShell script, inside a double-quoted here-string (@"..."@), and
+    running it with powershell.exe. PowerShell expands $variables and $(...)
+    subexpressions in such a string before anything else sees it, so a
+    subject containing one would run as PowerShell the moment the banner
+    appeared, with no click. The CDATA wrapper around the text doesn't help;
+    PowerShell evaluates the here-string before the XML is parsed.
+
+    So nothing that can start an expansion or end the string gets through:
+    '$' and the backtick are dropped, the here-string delimiters '"@' and
+    '@"' are broken up, and control characters go (a newline could put '"@'
+    at the start of a line). Ordinary punctuation and non-Latin text stay."""
+    text = "".join(ch for ch in (text or "")
+                   if ch == " " or (ch.isprintable() and ch not in "$`"))
+    return text.replace('"@', "'@").replace('@"', "@'")
+
+
 def _send_macos_native(title: str, body: str) -> None:
     """Send a banner notification via PyObjC UNUserNotificationCenter.
 
@@ -101,6 +122,8 @@ def send_blocking(title: str, body: str, msg_id: int | None = None,
                 _send_macos_native(title, body)
         elif sys.platform == "win32":
             from winotify import Notification
-            Notification(app_id="AMail", title=title, msg=body).show()
+            # Never hand email text to winotify as it came: see windows_safe_text.
+            Notification(app_id="AMail", title=windows_safe_text(title),
+                         msg=windows_safe_text(body)).show()
     except Exception:
         pass
