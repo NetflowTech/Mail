@@ -153,7 +153,7 @@ class ColorPickerDialog(QDialog):
     def _refresh(self):
         for btn in self._swatches:
             c = btn.property("swatch_color")
-            border = ("border: 2px solid #2B2823;" if c == self._color
+            border = (f"border: 2px solid {theme.TEXT};" if c == self._color
                       else "border: 1px solid transparent;")
             btn.setStyleSheet(
                 f"QPushButton {{ background: {c}; {border} border-radius: 4px; }}")
@@ -213,7 +213,7 @@ class NewGroupDialog(QDialog):
     def _update_swatches(self):
         for btn in self._swatches:
             c = btn.property("swatch_color")
-            border = ("border: 2px solid #2B2823;" if c == self._color
+            border = (f"border: 2px solid {theme.TEXT};" if c == self._color
                       else "border: 1px solid transparent;")
             btn.setStyleSheet(
                 f"QPushButton {{ background: {c}; {border} border-radius: 4px; }}")

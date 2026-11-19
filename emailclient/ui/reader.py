@@ -62,7 +62,7 @@ body {{ margin:0; background:{theme.CONTENT_BG}; }}
 .mail-header .meta-row {{ margin-top:14px; display:flex; align-items:flex-start; }}
 .mail-header .avatar {{
   width:36px; height:36px; border-radius:18px; margin-right:12px;
-  background:{theme.CONTENT_PANEL}; color:#ffffff;
+  background:{theme.CONTENT_ACCENT}; color:{theme.CONTENT_BG};
   font-size:15px; font-weight:600; line-height:36px; text-align:center;
   flex:none;
 }}
@@ -537,7 +537,7 @@ class ReaderPane(QWidget):
 
         def _btn(text, icon_name, signal):
             b = QPushButton(f" {text}")
-            b.setIcon(editor_icons.icon(icon_name))
+            editor_icons.set_icon(b, icon_name)
             b.setIconSize(QSize(16, 16))
             b.clicked.connect(lambda: self._current is not None
                               and signal.emit(self._current))
@@ -549,7 +549,7 @@ class ReaderPane(QWidget):
         bar_lay.addWidget(_btn("Forward", "forward", self.forward_requested))
         bar_lay.addStretch(1)
         print_btn = QPushButton(" Print")
-        print_btn.setIcon(editor_icons.icon("print"))
+        editor_icons.set_icon(print_btn, "print")
         print_btn.setIconSize(QSize(16, 16))
         print_btn.setToolTip("Print this email (Ctrl+P)")
         print_btn.clicked.connect(self._print_message)

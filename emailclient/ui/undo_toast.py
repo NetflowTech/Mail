@@ -24,18 +24,20 @@ class UndoSendToast(QFrame):
         self.active = True        # False once finished (sent, undone, replaced)
         self.ids: list[int] = []  # outbox rows this toast can recall
         self.setObjectName("undoToast")
-        self.setStyleSheet(f"""
+        # Inverted pill on light chrome, raised panel on dark — the tokens
+        # pick the pairing that stays readable in both.
+        theme.style(self, """
             QFrame#undoToast {{
-                background: {theme.TEXT};
-                border: 1px solid {theme.BORDER};
+                background: {TOAST_BG};
+                border: 1px solid {BORDER};
                 border-radius: 10px;
             }}
-            QLabel {{ color: white; background: transparent; font-size: 13px; }}
+            QLabel {{ color: {TOAST_TEXT}; background: transparent; font-size: 13px; }}
             QPushButton {{
-                color: {theme.GOLD}; background: transparent; border: none;
+                color: {TOAST_ACCENT}; background: transparent; border: none;
                 font-weight: 700; font-size: 13px; padding: 2px 6px;
             }}
-            QPushButton:hover {{ color: white; }}
+            QPushButton:hover {{ color: {TOAST_TEXT}; }}
         """)
         lay = QHBoxLayout(self)
         lay.setContentsMargins(16, 8, 10, 8)

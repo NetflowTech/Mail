@@ -470,9 +470,15 @@ def _paint(name: str, p: QPainter, color: str):
 
 
 def icon(name: str, color: str = None) -> QIcon:
-    """Return a cached 18x18 (2x retina) painted toolbar icon."""
-    col = color or theme.TEXT or "#1F2125"
-    key = (name, col, theme.GOLD_DEEP, theme.GOLD)
+    """Return a cached 18x18 (2x retina) painted toolbar icon.
+
+    *color* is a hex value or a theme token name ("TEXT_FAINT", "ON_ACCENT");
+    None means the theme's text colour. The tint is resolved NOW, so a widget
+    that keeps its icon across a theme switch must use `set_icon()` instead,
+    which re-tints it when the palette changes.
+    """
+    col = theme.color(color, "TEXT") or "#1F2125"
+    key = (name, col, theme.GOLD_DEEP, theme.GOLD, theme.PANEL)
     cached = _CACHE.get(key)
     if cached is not None:
         return cached
@@ -491,3 +497,50 @@ def icon(name: str, color: str = None) -> QIcon:
     ico = QIcon(QPixmap.fromImage(img))
     _CACHE[key] = ico
     return ico
+
+
+# ---- theme-tracking icons --------------------------------------------------
+# A QIcon is a baked bitmap: tint it with the light theme's near-black text
+# colour, switch to a dark theme, and the toolbar shows black glyphs on dark
+# chrome. Widgets that keep an icon for their lifetime register the SPEC
+# (icon name + colour token) here instead of the icon itself; a theme change
+# repaints them all.
+import weakref as _weakref
+
+_BOUND: "_weakref.WeakKeyDictionary" = _weakref.WeakKeyDictionary()
+
+
+def set_icon(target, name: str, color: str = None, size: int = None) -> None:
+    """Give *target* the icon *name*, tinted with *color*, and keep it tinted
+    across theme switches.
+
+    *target* is anything with setIcon() (buttons, QAction) or a QLabel, which
+    gets a pixmap of *size* px. *color* is a theme token ("TEXT_DIM",
+    "ON_ACCENT", "DANGER"…) or a literal hex colour; None means TEXT.
+    """
+    try:
+        _BOUND[target] = (name, color, size)
+    except TypeError:               # not weak-referenceable: still paint once
+        pass
+    _apply(target, name, color, size)
+
+
+def _apply(target, name, color, size) -> None:
+    ico = icon(name, color)
+    if hasattr(target, "setIcon"):
+        target.setIcon(ico)
+    elif hasattr(target, "setPixmap"):
+        px = size or _SIZE
+        target.setPixmap(ico.pixmap(px, px))
+
+
+def retheme() -> None:
+    """Re-tint every icon registered with `set_icon()` for the current theme."""
+    for target, (name, color, size) in list(_BOUND.items()):
+        try:
+            _apply(target, name, color, size)
+        except RuntimeError:        # the C++ widget is already gone
+            continue
+
+
+theme.on_change(retheme)

@@ -568,20 +568,19 @@ class ImageContextBar(QWidget):
         super().__init__(parent)
         self._editor = None
         self.setObjectName("imageBar")
-        self.setStyleSheet(
-            "#imageBar { background: %s; border: 1px solid %s; border-radius: 8px; }"
-            " QPushButton { border: 0; background: transparent; padding: 4px 9px;"
-            " border-radius: 5px; font-size: 13px; }"
-            " QPushButton:hover { background: %s; }"
-            " QPushButton:checked { background: %s; color: white; }"
-            " QLabel { padding: 0 4px; font-size: 12px; color: %s; }"
-            % (theme.GOLD_SOFT, theme.GOLD, theme.GOLD_HOVER, theme.GOLD_DEEP,
-               theme.TEXT if hasattr(theme, "TEXT") else "#333"))
+        theme.style(self, (
+            "#imageBar {{ background: {GOLD_SOFT}; border: 1px solid {GOLD};"
+            " border-radius: 8px; }}"
+            " QPushButton {{ border: 0; background: transparent; padding: 4px 9px;"
+            " border-radius: 5px; font-size: 13px; color: {TEXT}; }}"
+            " QPushButton:hover {{ background: {GOLD_HOVER}; }}"
+            " QPushButton:checked {{ background: {GOLD_DEEP}; color: {ON_ACCENT}; }}"
+            " QLabel {{ padding: 0 4px; font-size: 12px; color: {TEXT}; }}"))
         lay = QHBoxLayout(self)
         lay.setContentsMargins(6, 3, 6, 3)
         lay.setSpacing(2)
         tag = QLabel("Image:")
-        tag.setStyleSheet("color:%s; font-weight:600;" % theme.GOLD_DEEP)
+        theme.style(tag, "color: {GOLD_DEEP}; font-weight: 600;")
         lay.addWidget(tag)
 
         def _btn(text, tip, slot, checkable=False):
@@ -600,14 +599,14 @@ class ImageContextBar(QWidget):
         self._right = _btn("Right ◨", "Image right, text on the left",
                            lambda: self._call("right"), True)
         sep = QLabel("│")
-        sep.setStyleSheet("color:#ccc;")
+        theme.style(sep, "color: {TEXT_FAINT};")
         lay.addWidget(sep)
         _btn("−", "Smaller", lambda: self._size(-30))
         self._size_lbl = QLabel("")
         lay.addWidget(self._size_lbl)
         _btn("+", "Bigger", lambda: self._size(30))
         sep2 = QLabel("│")
-        sep2.setStyleSheet("color:#ccc;")
+        theme.style(sep2, "color: {TEXT_FAINT};")
         lay.addWidget(sep2)
         _btn("✂ Crop", "Crop this image", self._crop)
         lay.addStretch(1)
@@ -1582,7 +1581,7 @@ class ComposeDialog(QDialog):
     def _tool_btn(self, icon_name: str, slot, checkable: bool = False,
                   tip: str = "") -> QPushButton:
         btn = QPushButton()
-        btn.setIcon(editor_icons.icon(icon_name))
+        editor_icons.set_icon(btn, icon_name)
         btn.setFixedSize(28, 26)
         btn.setCheckable(checkable)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1676,7 +1675,7 @@ class ComposeDialog(QDialog):
 
         # Table: a Word-style grid picker drops down from the button.
         self.table_btn = QPushButton()
-        self.table_btn.setIcon(editor_icons.icon("table"))
+        editor_icons.set_icon(self.table_btn, "table")
         self.table_btn.setFixedSize(34, 26)
         self.table_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.table_btn.setToolTip("Insert table")
@@ -1688,7 +1687,7 @@ class ComposeDialog(QDialog):
         # Format painter: click once to copy the look at the caret and brush
         # it onto the next selection; double-click keeps the brush loaded.
         self.painter_btn = _PainterButton()
-        self.painter_btn.setIcon(editor_icons.icon("brush"))
+        editor_icons.set_icon(self.painter_btn, "brush")
         self.painter_btn.setFixedSize(28, 26)
         self.painter_btn.setCheckable(True)
         self.painter_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1713,7 +1712,7 @@ class ComposeDialog(QDialog):
         lay.addWidget(self.spell_btn)
 
         sig_btn = QPushButton("Signature")
-        sig_btn.setIcon(editor_icons.icon("sign"))
+        editor_icons.set_icon(sig_btn, "sign")
         sig_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         sig_menu = QMenu(sig_btn)
         sig_menu.addAction("Insert signature", self._insert_signature)

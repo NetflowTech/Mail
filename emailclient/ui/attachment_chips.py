@@ -196,8 +196,8 @@ class AttachmentChip(QFrame):
                                    Qt.TextElideMode.ElideMiddle, 140))
 
         size_label = QLabel(self._size_text(path))
-        size_label.setStyleSheet(
-            f"color: {theme.TEXT_DIM or '#70757D'}; font-size: 10px;")
+        size_label.setObjectName("chipSize")
+        theme.style(size_label, "QLabel#chipSize {{ color: {TEXT_DIM}; font-size: 10px; }}")
 
         col = QVBoxLayout()
         col.setContentsMargins(0, 0, 0, 0)
@@ -208,7 +208,7 @@ class AttachmentChip(QFrame):
         close = QPushButton()
         close.setObjectName("chipClose")
         close.setFixedSize(18, 18)
-        close.setIcon(editor_icons.icon("close", theme.TEXT_DIM or "#70757D"))
+        editor_icons.set_icon(close, "close", "TEXT_DIM")
         close.setIconSize(QSize(12, 12))
         close.setCursor(Qt.CursorShape.PointingHandCursor)
         close.setToolTip("Remove attachment")
@@ -331,8 +331,15 @@ class AttachmentArea(QWidget):
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._scroll.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._scroll.setStyleSheet("background: transparent;")
-        self._inner.setStyleSheet("background: transparent;")
+        # Scoped selectors: a bare "background: transparent" here would be
+        # copied onto every tooltip shown for a chip (QToolTip adopts the
+        # nearest styled ancestor) and leave the tip with no background.
+        self._scroll.setObjectName("attachScroll")
+        self._inner.setObjectName("attachInner")
+        self._scroll.setStyleSheet(
+            "QScrollArea#attachScroll, QScrollArea#attachScroll > QWidget"
+            " { background: transparent; }")
+        self._inner.setStyleSheet("QWidget#attachInner { background: transparent; }")
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)

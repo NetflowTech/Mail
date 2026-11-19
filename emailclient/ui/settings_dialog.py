@@ -1773,8 +1773,8 @@ class SettingsDialog(QDialog):
             theme.set_density(density)
             restyle = True
         if restyle:
-            app = QApplication.instance()
-            if app is not None:
-                app.setStyleSheet(theme.build_qss())  # live-apply chrome
+            # Palette + stylesheet + every registered listener (tinted icons,
+            # inline-styled widgets): one call, so nothing keeps the old colours.
+            theme.apply_live()
             self.appearance_changed.emit()
         self.accept()

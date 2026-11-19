@@ -981,8 +981,10 @@ class SidebarPanel(QWidget):
         self.search = QLineEdit()
         self.search.setObjectName("searchBox")
         self.search.setPlaceholderText("Search accounts & groups…")
-        self.search.addAction(editor_icons.icon("search", theme.TEXT_FAINT),
-                              QLineEdit.ActionPosition.LeadingPosition)
+        editor_icons.set_icon(
+            self.search.addAction(editor_icons.icon("search", "TEXT_FAINT"),
+                                  QLineEdit.ActionPosition.LeadingPosition),
+            "search", "TEXT_FAINT")
         self.search.setClearButtonEnabled(True)
         # Typing in a 50+ account list would rebuild the tree per keystroke;
         # coalesce into one rebuild once typing settles.
