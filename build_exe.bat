@@ -39,7 +39,7 @@ if errorlevel 1 goto :error
 "%PYTHON%" -m pip install -r "%REPO%\requirements.txt"
 if errorlevel 1 goto :error
 
-"%PYTHON%" -m pip install pyinstaller
+"%PYTHON%" -m pip install pyinstaller==6.22.3
 if errorlevel 1 goto :error
 
 echo Building Windows application...
