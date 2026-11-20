@@ -69,13 +69,24 @@ $Data = Join-Path $env:ProgramData "AMailAdmin"
 $Py = Join-Path $Here ".venv\Scripts\python.exe"
 
 Write-Host "==> Checking Python (3.10 or newer)"
-& py -3 -c "import sys; assert sys.version_info >= (3, 10), sys.version" 2>$null
-if ($LASTEXITCODE -ne 0) {
-    throw "Python 3.10+ not found. Install it from python.org (tick 'Add to PATH' and the 'py' launcher), then run this again."
+# The py launcher if present, else python on PATH (Windows PowerShell 5.1: no ?? operator)
+$SysPy = $null
+foreach ($cand in @(@("py", "-3"), @("python"))) {
+    if (Get-Command $cand[0] -ErrorAction SilentlyContinue) {
+        & $cand[0] $cand[1..($cand.Length - 1)] -c "import sys; assert sys.version_info >= (3, 10), sys.version" 2>$null
+        if ($LASTEXITCODE -eq 0) { $SysPy = $cand; break }
+    }
+}
+if (-not $SysPy) {
+    throw "Python 3.10+ not found. Install it from python.org with 'Install for all users' ticked, then run this again."
+}
+$base = & $SysPy[0] $SysPy[1..($SysPy.Length - 1)] -c "import sys; print(sys.base_prefix)"
+if ($base -like "C:\Users\*") {
+    throw "Python is installed for one user only ($base). The backend runs as LOCAL SERVICE, which can't use it. Reinstall Python from python.org with 'Install for all users' ticked, then run this again."
 }
 
 Write-Host "==> Creating the Python environment"
-if (-not (Test-Path $Py)) { & py -3 -m venv (Join-Path $Here ".venv") }
+if (-not (Test-Path $Py)) { & $SysPy[0] $SysPy[1..($SysPy.Length - 1)] -m venv (Join-Path $Here ".venv") }
 # Exact versions with checksums: a tampered or substituted package is refused.
 # requirements-test.txt = the backend's packages plus pytest, which the
 # auto-updater runs against new code before restarting.
