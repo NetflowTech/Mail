@@ -1,6 +1,7 @@
 {
-  "version": "2.0.13",
-  "win_url": "https://github.com/NetflowTech/Mail/releases/download/v2.0.13/AMail-Setup-2.0.13.exe",
-  "win_sha256": "9c489f825f40b2f04cbbf238650e65bbb7573afb30a3bbba1636723af22da9ee",
-  "win_sig_url": "https://github.com/NetflowTech/Mail/releases/download/v2.0.13/AMail-Setup-2.0.13.exe.minisig"
+  "version": "2.1.0",
+  "win_url": "https://github.com/NetflowTech/Mail/releases/download/v2.1.0/AMail-Setup-2.1.0.exe",
+  "win_sha256": "cc4dc8f3000bdd9080452c82912d8fea7036c6c2aa04a92b108c2f5d565b09b2",
+  "win_sig_url": "https://github.com/NetflowTech/Mail/releases/download/v2.1.0/AMail-Setup-2.1.0.exe.minisig",
+  "notes": "Organization sign-in: company mailboxes are assigned to this PC by IT and open automatically\nHand over an account you already use to your organization from Settings\nSigned updates are now bound to their version number\nSafer Windows notifications and more risky attachment types blocked\nZoho, Microsoft 365 and Google accounts keep working as before"
 }
