@@ -159,11 +159,15 @@ class TestCurrentPlatform:
         plat = _current_platform()
         assert plat in ("win", "mac", "other")
 
-    def test_fetch_manifest_is_disabled(self):
+    def test_fetch_manifest_offline_returns_none(self, monkeypatch):
+        import urllib.request
         from emailclient.updater import fetch_manifest
-        # Customer edition stubs this out — must not hit the network.
-        result = fetch_manifest()
-        assert result is None
+
+        def no_network(*a, **k):
+            raise OSError("offline")
+        monkeypatch.setattr(urllib.request, "urlopen", no_network)
+        # Being offline must never raise: startup goes on without an update check.
+        assert fetch_manifest() is None
 
     def test_download_and_verify_is_disabled(self, tmp_path):
         from emailclient.updater import download_and_verify

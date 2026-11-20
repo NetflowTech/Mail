@@ -84,6 +84,51 @@ jobs:
           $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
           echo "hash=$hash" >> $env:GITHUB_OUTPUT
 
+      - name: Create GitHub release and upload installer
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: AMail ${{ steps.ver.outputs.version }}
+          body_path: release_notes.txt
+          files: installer_output/AMail-Setup-${{ steps.ver.outputs.version }}.exe
+
+      # The signing server (sign_release.ps1, every 5 minutes) sees the new release,
+      # signs the installer with minisign -t "version:X.Y.Z" and uploads the .minisig.
+      # version.json is what makes installed copies offer the update, and the app
+      # refuses an update whose signature is missing or made for another version, so
+      # version.json must not go live before the signature exists and checks out.
+      - name: Wait for the signing server's .minisig
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          sig="AMail-Setup-${{ steps.ver.outputs.version }}.exe.minisig"
+          for i in $(seq 1 60); do
+            if gh release view "${GITHUB_REF_NAME}" --repo "${{ github.repository }}" --json assets --jq '.assets[].name' | grep -qx "$sig"; then
+              echo "signature found after about $((i * 30)) seconds"
+              gh release download "${GITHUB_REF_NAME}" --repo "${{ github.repository }}" --pattern "$sig" --dir installer_output --clobber
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "::error::No $sig on the release after 30 minutes. Check the signing server (sign_release.ps1 task, gh auth). version.json was NOT updated, so nobody is offered this build yet. Once the .minisig is uploaded, re-run only this job's failed steps (Re-run failed jobs), or sign by hand and commit version.json yourself."
+          exit 1
+
+      - name: Verify the signature the way the app will
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from emailclient import updater
+          v = "${{ steps.ver.outputs.version }}"
+          exe = Path(f"installer_output/AMail-Setup-{v}.exe")
+          ok = updater._verify_minisign(exe, Path(str(exe) + ".minisig"), version=v)
+          if not ok:
+              raise SystemExit(f"::error::signature check failed: {updater.last_failure()}. "
+                               "Is sign_release.ps1 using -t \"version:$version\"? version.json was NOT updated.")
+          print("signature verifies and is bound to version", v)
+          PY
+
       - name: Update version.json
         shell: pwsh
         run: |
@@ -102,6 +147,7 @@ jobs:
           } | ConvertTo-Json
           $json | Set-Content version.json -Encoding UTF8
 
+      # This is the moment the update goes live for every installed copy.
       - name: Commit version.json back to main
         shell: bash
         run: |
@@ -109,12 +155,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add version.json
           git commit -m "Update version.json for ${{ github.ref_name }}"
+          # main may have moved while we waited for the signature
+          git fetch origin main
+          git rebase origin/main
           git push origin HEAD:main
-
-      - name: Create GitHub release and upload installer
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: AMail ${{ steps.ver.outputs.version }}
-          body_path: release_notes.txt
-          files: installer_output/AMail-Setup-${{ steps.ver.outputs.version }}.exe
