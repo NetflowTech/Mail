@@ -145,6 +145,34 @@ def cmd_import_key(_args) -> int:
     return 0
 
 
+def cmd_backup(args) -> int:
+    """A consistent copy of the database into *args.dir*, even while the
+    server is running (SQLite's own backup API, so a half-written page is
+    never copied). Keeps the newest *args.keep* copies. Used by the
+    auto-updater before every update, and fine for a daily task."""
+    import sqlite3
+    import time
+    from pathlib import Path
+    cfg = from_env()
+    out = Path(args.dir)
+    out.mkdir(parents=True, exist_ok=True)
+    dest = out / time.strftime("admin-%Y%m%d-%H%M%S.db")
+    src = sqlite3.connect(f"file:{cfg.db_path}?mode=ro", uri=True)
+    try:
+        dst = sqlite3.connect(dest)
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+    finally:
+        src.close()
+    copies = sorted(out.glob("admin-*.db"))
+    for old in copies[:-max(1, args.keep)]:
+        old.unlink()
+    print(f"Backed up to {dest} ({len(copies[-args.keep:])} kept)")
+    return 0
+
+
 def cmd_run(_args) -> int:
     from cheroot import wsgi
     from cheroot.ssl.builtin import BuiltinSSLAdapter
@@ -222,6 +250,10 @@ def main(argv=None) -> int:
         fn=cmd_export_key)
     sub.add_parser("import-key", help="restore the master key on a new server").set_defaults(
         fn=cmd_import_key)
+    b = sub.add_parser("backup", help="copy the database into a folder, keeping the newest N")
+    b.add_argument("dir")
+    b.add_argument("--keep", type=int, default=20)
+    b.set_defaults(fn=cmd_backup)
     args = p.parse_args(argv)
     if args.cmd == "init":
         from urllib.parse import urlparse

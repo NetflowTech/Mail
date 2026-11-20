@@ -150,6 +150,19 @@ PCs outside the office must reach port 8443. Choose one of these:
   tunnels); for Cloudflare set `AMAIL_PROXY_HEADER=CF-Connecting-IP`. Only
   point a tunnel at port 8443, never at 8444.
 
+  On a server that already runs a Cloudflare Tunnel from a `config.yml`,
+  the installer does all of this in one go:
+
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File .\install_windows.ps1 -PublicUrl https://amail.example.com `
+      -TunnelHostname amail.example.com -TrustedProxies 127.0.0.1 -ProxyHeader CF-Connecting-IP -DeviceHost 127.0.0.1
+  ```
+
+  `-DeviceHost 127.0.0.1` keeps the PC port reachable only through the
+  tunnel (every PC, in the office or not, uses the tunnel address), and
+  `deploy\windows\add-tunnel-route.ps1` adds the hostname to the tunnel's
+  `config.yml`, creates the DNS record and restarts `cloudflared`.
+
 ## Install (Windows server)
 
 1. Install Python 3.10 or newer from python.org. Tick "Add to PATH" and the
@@ -175,6 +188,43 @@ PCs outside the office must reach port 8443. Choose one of these:
    **Settings → Organization → Connect**.
 7. **PCs:** type in the check code that AMail shows on that PC, approve it,
    then sign it in to mailboxes.
+
+## Updating the backend
+
+Install from a git clone and updates take care of themselves:
+
+```powershell
+git clone https://github.com/NetflowTech/Mail.git C:\AMail\Mail
+cd C:\AMail\Mail\backend
+powershell -ExecutionPolicy Bypass -File .\install_windows.ps1 -PublicUrl ... (as above)
+```
+
+The installer then registers an **"AMail Admin update"** task (every 5
+minutes, as SYSTEM) and prints a read-only *deploy key* for you to add once
+at GitHub → the repo → Settings → Deploy keys. From then on, every commit
+to `main` reaches the server within five minutes:
+
+1. a copy of the database goes to `C:\ProgramData\AMailAdmin\backups\pre-update`
+   (newest 20 kept),
+2. the new code is pulled and, if the requirements changed, installed,
+3. the backend's own tests run against the new code **before** it goes live,
+4. the backend restarts and is checked at `/api/v1/health`.
+
+If the tests fail, or the restarted backend doesn't answer, it rolls back to
+the previous commit, keeps running on it, and skips that commit until a
+newer one is pushed. A commit that changes nothing under `backend\` is pulled
+without a restart. Everything is in `C:\ProgramData\AMailAdmin\logs\update.log`,
+and with `WHATSAPP_PHONE` / `WHATSAPP_APIKEY` set as machine environment
+variables (see `deploy\windows\notify.ps1`) each update or rollback is
+messaged to you.
+
+It won't update over files edited by hand on the server (it logs that and
+waits), or if `main`'s history was rewritten. `-NoAutoUpdate` on the
+installer turns it off; a plain copy of the `backend` folder (no git) is
+updated by copying the new folder over and running the installer again.
+
+`python -m amail_admin backup <folder> --keep N` makes a consistent copy of
+the database at any time, server running or not.
 
 ## Backups
 
@@ -213,7 +263,7 @@ page records every sign-in, sign-out, approval and login.
 
 ```sh
 cd backend
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt pytest==8.3.5
+python3 -m venv .venv && .venv/bin/pip install --require-hashes -r requirements-test.txt
 .venv/bin/python -m pytest tests
 AMAIL_ADMIN_DATA=./data .venv/bin/python -m amail_admin init --url https://127.0.0.1:8443
 AMAIL_ADMIN_DATA=./data .venv/bin/python -m amail_admin create-admin admin

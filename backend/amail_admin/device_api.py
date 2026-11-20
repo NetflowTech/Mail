@@ -234,6 +234,12 @@ def create_device_app(store: Store, master_key: bytes, checkin_interval: int,
                 store.audit("device", "takeover_declined",
                             f"{email} on {device['name']}")
 
+    @app.get("/api/v1/health")
+    def health():
+        """Is the server up? For the auto-updater and the tunnel check;
+        says nothing about the organization."""
+        return jsonify(ok=True)
+
     @app.post("/api/v1/checkin")
     def checkin():
         ip = client_ip()

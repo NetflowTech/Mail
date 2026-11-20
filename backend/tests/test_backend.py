@@ -1035,3 +1035,25 @@ def test_rate_limiter_forgets_quiet_clients():
     now[0] += ratelimit.SWEEP_EVERY
     lim.allow("other", limit=1, per_seconds=1)
     assert len(lim) == 2
+
+
+def test_health_answers_without_a_token(env):
+    r = env["dev"].get("/api/v1/health")
+    assert r.status_code == 200 and r.get_json() == {"ok": True}
+
+
+def test_backup_copies_the_database_and_keeps_the_newest(env, tmp_path, monkeypatch):
+    import types
+    from amail_admin import __main__ as console
+    env["store"].set_setting("marker", "present")
+    monkeypatch.setattr(console, "from_env", lambda: env["cfg"])
+    out = tmp_path / "backups"
+    for _ in range(4):
+        assert console.cmd_backup(types.SimpleNamespace(dir=str(out), keep=3)) == 0
+        time.sleep(1.05)                       # file names carry the second
+    copies = sorted(out.glob("admin-*.db"))
+    assert len(copies) == 3
+    import sqlite3
+    db = sqlite3.connect(copies[-1])
+    assert db.execute("SELECT value FROM settings WHERE key='marker'").fetchone()[0] == "present"
+    db.close()

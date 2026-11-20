@@ -19,6 +19,15 @@
   -ProxyHeader  the header that proxy puts the PC's address in:
               "CF-Connecting-IP" for Cloudflare Tunnel, "X-Forwarded-For"
               (the default) for nginx, Caddy and most others.
+  -DeviceHost  which addresses the PC port listens on: 0.0.0.0 (default, all)
+              or 127.0.0.1 when every PC comes through a tunnel on this
+              machine (the port is then not opened in the firewall).
+  -TunnelHostname  publish the PC port through this machine's existing
+              Cloudflare Tunnel under this name (deploy\windows\add-tunnel-route.ps1).
+  -NoAutoUpdate  don't set up the 5-minute "AMail Admin update" task. By
+              default, when this folder is inside a git clone of the repo,
+              the task pulls new commits from GitHub, runs the backend's
+              tests and restarts it, rolling back if anything fails.
 
   What it does:
     1. creates a Python environment in .venv and installs the requirements,
@@ -39,7 +48,10 @@ param(
     [string]$Admin = "admin",
     [string]$AdminNetwork = "LocalSubnet",
     [string]$TrustedProxies = "",
-    [string]$ProxyHeader = "X-Forwarded-For"
+    [string]$ProxyHeader = "X-Forwarded-For",
+    [string]$DeviceHost = "0.0.0.0",
+    [string]$TunnelHostname = "",
+    [switch]$NoAutoUpdate
 )
 $ErrorActionPreference = "Stop"
 
@@ -65,7 +77,9 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "==> Creating the Python environment"
 if (-not (Test-Path $Py)) { & py -3 -m venv (Join-Path $Here ".venv") }
 # Exact versions with checksums: a tampered or substituted package is refused.
-& $Py -m pip install --quiet --require-hashes -r (Join-Path $Here "requirements.txt")
+# requirements-test.txt = the backend's packages plus pytest, which the
+# auto-updater runs against new code before restarting.
+& $Py -m pip install --quiet --require-hashes -r (Join-Path $Here "requirements-test.txt")
 if ($LASTEXITCODE -ne 0) { throw "Installing the requirements failed" }
 
 # The service runs code from this folder: only Administrators and SYSTEM may
@@ -103,6 +117,9 @@ $ProxyLines = ""
 if ($TrustedProxies) {
     $ProxyLines = "set AMAIL_TRUSTED_PROXIES=$TrustedProxies`r`nset AMAIL_PROXY_HEADER=$ProxyHeader`r`n"
 }
+if ($DeviceHost -ne "0.0.0.0") {
+    $ProxyLines += "set AMAIL_DEVICE_HOST=$DeviceHost`r`n"
+}
 @"
 @echo off
 rem Started by the "AMail Admin" scheduled task. Do not move this folder.
@@ -128,8 +145,10 @@ Write-Host "==> Firewall"
 foreach ($n in "AMail Admin - PCs", "AMail Admin - Panel") {
     Get-NetFirewallRule -DisplayName $n -ErrorAction SilentlyContinue | Remove-NetFirewallRule
 }
-New-NetFirewallRule -DisplayName "AMail Admin - PCs" -Direction Inbound -Protocol TCP `
-    -LocalPort 8443 -Action Allow | Out-Null
+if ($DeviceHost -ne "127.0.0.1") {
+    New-NetFirewallRule -DisplayName "AMail Admin - PCs" -Direction Inbound -Protocol TCP `
+        -LocalPort 8443 -Action Allow | Out-Null
+}
 $panelRemote = if ($AdminNetwork -eq "LocalSubnet") { "LocalSubnet" } else { $AdminNetwork -split "," }
 New-NetFirewallRule -DisplayName "AMail Admin - Panel" -Direction Inbound -Protocol TCP `
     -LocalPort 8444 -RemoteAddress $panelRemote -Action Allow | Out-Null
@@ -137,6 +156,72 @@ New-NetFirewallRule -DisplayName "AMail Admin - Panel" -Direction Inbound -Proto
 $ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {
         $_.IPAddress -notlike "127.*" -and $_.IPAddress -notlike "169.254.*" } |
        Select-Object -First 1).IPAddress
+
+# ----- Auto-update from GitHub -----------------------------------------------
+# Only when this folder is inside a git clone (C:\...\Mail\backend): the task
+# needs the repo to pull into. A plain copy of the folder is updated by hand.
+$Repo = Split-Path $Here -Parent
+$IsClone = (Test-Path (Join-Path $Repo ".git")) -and (Get-Command git -ErrorAction SilentlyContinue)
+Unregister-ScheduledTask -TaskName "AMail Admin update" -Confirm:$false -ErrorAction SilentlyContinue
+if ($NoAutoUpdate) {
+    Write-Host "==> Auto-update: off (-NoAutoUpdate)"
+} elseif (-not $IsClone) {
+    Write-Host "==> Auto-update: off. To turn it on, install from a git clone of the repo"
+    Write-Host "    (git clone https://github.com/NetflowTech/Mail.git, then run this from Mail\backend)"
+    Write-Host "    with Git for Windows installed."
+} else {
+    Write-Host "==> Auto-update from GitHub"
+    # The update task runs as SYSTEM and pulls into the whole clone, so the
+    # clone gets the same lock as this folder: Administrators and SYSTEM only.
+    & icacls $Repo /inheritance:r /grant:r "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" "${LocalService}:(OI)(CI)RX" | Out-Null
+    $repoSlash = $Repo -replace "\\", "/"
+    $ErrorActionPreference = "Continue"   # git writes to stderr; check $LASTEXITCODE
+    if (-not (& git config --system --get-all safe.directory 2>$null | Where-Object { $_ -eq $repoSlash })) {
+        & git config --system --add safe.directory $repoSlash
+    }
+    # A read-only GitHub deploy key, kept in the data folder (never in the repo).
+    $keyFile = Join-Path $Data "deploy_key"
+    if (-not (Test-Path $keyFile)) {
+        & cmd /c "ssh-keygen -q -t ed25519 -N """" -C amail-admin-server -f `"$keyFile`""
+    }
+    $dataSlash = $Data -replace "\\", "/"
+    & git -C $Repo config core.sshCommand "ssh -i '$dataSlash/deploy_key' -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile='$dataSlash/known_hosts'"
+    $url = (& git -C $Repo remote get-url origin)
+    if ($url -match "^https://github\.com/(.+?)(\.git)?$") {
+        & git -C $Repo remote set-url origin "git@github.com:$($Matches[1]).git"
+    }
+    & git -C $Repo ls-remote -q origin *> $null
+    $gitOk = ($LASTEXITCODE -eq 0)
+    $ErrorActionPreference = "Stop"
+    $sysPrincipal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+    $short = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 30) -StartWhenAvailable `
+        -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew
+    $every5 = New-ScheduledTaskTrigger -Once -At (Get-Date).Date -RepetitionInterval (New-TimeSpan -Minutes 5)
+    Register-ScheduledTask -TaskName "AMail Admin update" -Force -Principal $sysPrincipal -Settings $short `
+        -Trigger $every5 `
+        -Action (New-ScheduledTaskAction -Execute "powershell.exe" -WorkingDirectory $Repo `
+            -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$Here\deploy\windows\update-backend.ps1`"") | Out-Null
+    if ($gitOk) {
+        Write-Host "    GitHub access OK (deploy key). New commits on main are applied within 5 minutes;"
+        Write-Host "    log: $Data\logs\update.log"
+    } else {
+        Write-Host ""
+        Write-Warning "Auto-update can't reach GitHub yet. Add this server's deploy key once:"
+        Write-Host "  GitHub -> NetflowTech/Mail -> Settings -> Deploy keys -> Add deploy key"
+        Write-Host "  Title: amail-admin-server.  Leave 'Allow write access' unticked.  Key:"
+        Write-Host ""
+        Get-Content "$keyFile.pub"
+        Write-Host ""
+        Write-Host "  Nothing else to run: the update task starts working as soon as the key is added."
+    }
+}
+
+# ----- Cloudflare Tunnel ------------------------------------------------------
+if ($TunnelHostname) {
+    Write-Host "==> Cloudflare Tunnel: $TunnelHostname"
+    & "$Here\deploy\windows\add-tunnel-route.ps1" -Hostname $TunnelHostname -Port 8443
+}
+
 Write-Host ""
 Write-Host "Done."
 Write-Host "  Admin panel:  https://${ip}:8444"
