@@ -59,6 +59,10 @@ param(
     [switch]$NoAutoUpdate
 )
 $ErrorActionPreference = "Stop"
+# Another program on the machine may have set PYTHONPATH system-wide (ZKBioTime
+# does). It must never reach into the backend's environment: not now, not
+# when the service runs.
+$env:PYTHONPATH = ""
 
 $principal = New-Object Security.Principal.WindowsPrincipal(
     [Security.Principal.WindowsIdentity]::GetCurrent())
@@ -145,6 +149,7 @@ if ($DeviceHost -ne "0.0.0.0") {
 @"
 @echo off
 rem Started by the "AMail Admin" scheduled task. Do not move this folder.
+set PYTHONPATH=
 set AMAIL_ADMIN_DATA=$Data
 set AMAIL_ADMIN_NETWORKS=$PanelNets
 ${ProxyLines}cd /d "%~dp0"

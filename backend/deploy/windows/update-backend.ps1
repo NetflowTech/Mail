@@ -13,6 +13,7 @@ $backend = (Resolve-Path "$PSScriptRoot\..\..").Path     # ...\Mail\backend
 $repo = (Resolve-Path "$backend\..").Path                 # ...\Mail (the git clone)
 Set-Location $repo
 $py = "$backend\.venv\Scripts\python.exe"
+$env:PYTHONPATH = ""      # another program's system-wide PYTHONPATH must not leak in
 $data = if ($env:AMAIL_ADMIN_DATA) { $env:AMAIL_ADMIN_DATA } else { "$env:ProgramData\AMailAdmin" }
 $env:AMAIL_ADMIN_DATA = $data
 $logFile = "$data\logs\update.log"
