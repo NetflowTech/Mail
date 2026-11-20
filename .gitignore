@@ -50,3 +50,5 @@ htmlcov/
 # AMail admin backend: server data (keys, database) and the generated runner
 backend/data/
 backend/run_server.cmd
+
+.env
