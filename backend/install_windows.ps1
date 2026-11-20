@@ -24,6 +24,10 @@
               machine (the port is then not opened in the firewall).
   -TunnelHostname  publish the PC port through this machine's existing
               Cloudflare Tunnel under this name (deploy\windows\add-tunnel-route.ps1).
+  -Python     the python.exe to build the backend's environment from, when
+              the one the "py" launcher picks isn't right (for example a
+              copy bundled with another program). Must be installed for
+              all users, e.g. "C:\Program Files\Python312\python.exe".
   -NoAutoUpdate  don't set up the 5-minute "AMail Admin update" task. By
               default, when this folder is inside a git clone of the repo,
               the task pulls new commits from GitHub, runs the backend's
@@ -51,6 +55,7 @@ param(
     [string]$ProxyHeader = "X-Forwarded-For",
     [string]$DeviceHost = "0.0.0.0",
     [string]$TunnelHostname = "",
+    [string]$Python = "",
     [switch]$NoAutoUpdate
 )
 $ErrorActionPreference = "Stop"
@@ -69,24 +74,30 @@ $Data = Join-Path $env:ProgramData "AMailAdmin"
 $Py = Join-Path $Here ".venv\Scripts\python.exe"
 
 Write-Host "==> Checking Python (3.10 or newer)"
-# The py launcher if present, else python on PATH (Windows PowerShell 5.1: no ?? operator)
+# -Python if given, else the py launcher, else python on PATH. A Python that
+# prints warnings on startup (a broken package file, say) must not count as
+# missing: Windows PowerShell 5.1 turns native stderr into errors under
+# "Stop", so the checks run under "Continue" and look at the exit code.
+$ErrorActionPreference = "Continue"
 $SysPy = $null
-foreach ($cand in @(@("py", "-3"), @("python"))) {
-    if (Get-Command $cand[0] -ErrorAction SilentlyContinue) {
-        & $cand[0] $cand[1..($cand.Length - 1)] -c "import sys; assert sys.version_info >= (3, 10), sys.version" 2>$null
-        if ($LASTEXITCODE -eq 0) { $SysPy = $cand; break }
-    }
+$cands = @()
+if ($Python) { $cands += , @($Python) } else { $cands += , @("py", "-3"); $cands += , @("python") }
+foreach ($cand in $cands) {
+    if (-not (Get-Command $cand[0] -ErrorAction SilentlyContinue)) { continue }
+    $out = & $cand[0] @($cand[1..($cand.Length - 1)]) -c "import sys; print(sys.version_info >= (3, 10)); print(sys.base_prefix)" 2>$null
+    if ($LASTEXITCODE -eq 0 -and ($out -join "`n") -match "True") { $SysPy = $cand; $base = ($out | Select-Object -Last 1); break }
 }
+$ErrorActionPreference = "Stop"
 if (-not $SysPy) {
-    throw "Python 3.10+ not found. Install it from python.org with 'Install for all users' ticked, then run this again."
+    throw "Python 3.10+ not found. Install it from python.org with 'Install for all users' ticked, then run this again (or pass -Python <path to python.exe>)."
 }
-$base = & $SysPy[0] $SysPy[1..($SysPy.Length - 1)] -c "import sys; print(sys.base_prefix)"
 if ($base -like "C:\Users\*") {
     throw "Python is installed for one user only ($base). The backend runs as LOCAL SERVICE, which can't use it. Reinstall Python from python.org with 'Install for all users' ticked, then run this again."
 }
+Write-Host "    using $base"
 
 Write-Host "==> Creating the Python environment"
-if (-not (Test-Path $Py)) { & $SysPy[0] $SysPy[1..($SysPy.Length - 1)] -m venv (Join-Path $Here ".venv") }
+if (-not (Test-Path $Py)) { & $SysPy[0] @($SysPy[1..($SysPy.Length - 1)]) -m venv (Join-Path $Here ".venv") }
 # Exact versions with checksums: a tampered or substituted package is refused.
 # requirements-test.txt = the backend's packages plus pytest, which the
 # auto-updater runs against new code before restarting.
