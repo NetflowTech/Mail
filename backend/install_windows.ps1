@@ -86,13 +86,19 @@ $ErrorActionPreference = "Continue"
 $SysPy = $null
 $cands = @()
 if ($Python) { $cands += , @($Python) } else { $cands += , @("py", "-3"); $cands += , @("python") }
+$PyExe = $null; $PyArgs = @()
 foreach ($cand in $cands) {
-    if (-not (Get-Command $cand[0] -ErrorAction SilentlyContinue)) { continue }
-    $out = & $cand[0] @($cand[1..($cand.Length - 1)]) -c "import sys; print(sys.version_info >= (3, 10)); print(sys.base_prefix)" 2>$null
-    if ($LASTEXITCODE -eq 0 -and ($out -join "`n") -match "True") { $SysPy = $cand; $base = ($out | Select-Object -Last 1); break }
+    $exe = $cand[0]
+    # (a one-item list sliced with 1..0 would run backwards and repeat the exe)
+    $extra = @(); if ($cand.Length -gt 1) { $extra = @($cand[1..($cand.Length - 1)]) }
+    if (-not (Get-Command $exe -ErrorAction SilentlyContinue)) { continue }
+    $out = & $exe @extra -c "import sys; print(sys.version_info >= (3, 10)); print(sys.base_prefix)" 2>$null
+    if ($LASTEXITCODE -eq 0 -and ($out -join "`n") -match "True") {
+        $PyExe = $exe; $PyArgs = $extra; $base = ($out | Select-Object -Last 1); break
+    }
 }
 $ErrorActionPreference = "Stop"
-if (-not $SysPy) {
+if (-not $PyExe) {
     throw "Python 3.10+ not found. Install it from python.org with 'Install for all users' ticked, then run this again (or pass -Python <path to python.exe>)."
 }
 if ($base -like "C:\Users\*") {
@@ -101,7 +107,7 @@ if ($base -like "C:\Users\*") {
 Write-Host "    using $base"
 
 Write-Host "==> Creating the Python environment"
-if (-not (Test-Path $Py)) { & $SysPy[0] @($SysPy[1..($SysPy.Length - 1)]) -m venv (Join-Path $Here ".venv") }
+if (-not (Test-Path $Py)) { & $PyExe @PyArgs -m venv (Join-Path $Here ".venv") }
 # Exact versions with checksums: a tampered or substituted package is refused.
 # requirements-test.txt = the backend's packages plus pytest, which the
 # auto-updater runs against new code before restarting.
